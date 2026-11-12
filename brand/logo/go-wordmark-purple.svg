@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 150 960 480" role="img" aria-label="GO">
   <g fill="#512584" fill-rule="evenodd">
     <path d="M409.7 220.3 A240 240 0 1 0 471.8 452 L336.8 452 A115 115 0 1 1 321.3 308.7 Z"/>
-    <rect x="187" y="325" width="295" height="127"/>
+    <rect x="187" y="325" width="360" height="127"/>
     <circle cx="715" cy="390" r="177.5" fill="none" stroke="#512584" stroke-width="125"/>
   </g>
 </svg>
