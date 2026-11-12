@@ -2,6 +2,7 @@
   <g fill="#FFFFFF">
     <path d="M393.7 478.75 A177.5 177.5 0 1 1 365.5 264.5" fill="none" stroke="#FFFFFF" stroke-width="125"/>
     <rect x="185" y="325" width="295" height="127"/>
+    <polygon points="340,452 482,452 482,470 450,506 400,500 340,452" fill="#FFFFFF"/>
     <circle cx="715" cy="390" r="177.5" fill="none" stroke="#FFFFFF" stroke-width="125"/>
   </g>
 </svg>
