@@ -1,6 +1,18 @@
 # Booking, payment and fulfilment policy
 
-Status: **Policy proposal for owner approval.** This is a binding design rule for the platform once approved. It sets the order of operations for every booking and every payment method.
+## Approval record
+
+| Item | Decision | Date |
+|---|---|---|
+| Money-safety principle ("we never take a customer's money before we know the flight can be ticketed") | **Approved in principle, subject to the owner's review of the full document** | 12 Nov 2026 |
+| Preferred approach for Naira payments | **Option A**: payment provider with confirmed authorisation and capture for Nigerian NGN cards | 12 Nov 2026 |
+| Option B (supplier-first, funded supplier balance) | **Not approved.** The owner will not commit working capital to fund supplier bookings before receiving customer payments | 12 Nov 2026 |
+| Option C (customer pays first, then we ticket) | **Excluded.** Not built, not offered | 12 Nov 2026 |
+| Production payments | **Disabled.** Enabled only after (1) the chosen approach is confirmed in writing by the provider, (2) it is technically tested, and (3) the owner approves in writing | 12 Nov 2026 |
+
+Consequence: until Option A is confirmed in writing, card and bank-transfer payments remain off in production, and no customer can be charged through any provider.
+
+Status: **Policy for the owner's final review.** Once approved in full, this is a binding design rule for the platform. It sets the order of operations for every booking and every payment method.
 
 ## The rule
 
@@ -53,11 +65,11 @@ Until one of these is confirmed in writing, the options are:
 
 **Option A (preferred, needs confirmation):** Authorisation and capture from a provider that supports it for Nigerian NGN cards. Follows the flow above exactly.
 
-**Option B (fallback, owner decision required):** Supplier-first fulfilment. We keep a funded Duffel balance (or equivalent) and ticket before charging the customer, then capture immediately. This means we fund supplier cost before collecting from the customer. It needs a funded balance arrangement, a working-capital decision and a rule for unpaid tickets, all of which need written confirmation from Duffel and your finance decision.
+**Option B (NOT APPROVED by the owner, 12 Nov 2026):** Supplier-first fulfilment. We keep a funded Duffel balance (or equivalent) and ticket before charging the customer, then capture immediately. This means we fund supplier cost before collecting from the customer. It needs a funded balance arrangement, a working-capital decision and a rule for unpaid tickets, all of which need written confirmation from Duffel and your finance decision.
 
 **Option C (not permitted):** Customer pays first, then we ticket. This violates the rule and is **not** part of this policy. It is not built, and it is not offered.
 
-**Until Option A or B is confirmed, card and bank-transfer payment for production bookings stays disabled.** Search and quoting can run on the mock and sandbox.
+**Until Option A is confirmed in writing, technically tested and approved by the owner, card and bank-transfer payment for production bookings stays disabled.** Search and quoting can run on the mock and sandbox.
 
 ## Failure handling
 

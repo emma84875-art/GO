@@ -89,3 +89,54 @@ Architecture supports any origin-destination pair with a supplier connection. Ex
 ## Decision needed
 
 Confirm Wave 1 scope (ten routes above, or a smaller set), and whether you want to fund an OAG or Cirium data licence to replace the public snapshots with current schedules before launch.
+
+## Update 12 Nov 2026: domestic evidence, hub emphasis, and data evaluation
+
+### Domestic evidence
+
+- **Lagos–Abuja** is the busiest domestic route. Asaba and Port Harcourt are named among the next busiest. Source: an interview with the Acting COO of Bi-Courtney Aviation Services (MMA2), published by [Nairametrics, 1 March 2026](https://nairametrics.com/2026/03/01/mma2-lagos-abuja-asaba-port-harcourt-busiest-domestic-routes-bi-courtney-coo/). This is an operator's ranking based on undisclosed operational data for an undisclosed period. No route passenger counts were published.
+- Terminal 2 at Lagos averages 60 to 65 departures a day, and sometimes runs five flights on one route in a day. Source: same article.
+- Domestic fares reported by ticketing agents: N120,000 to N150,000 for most of 2025, and above N200,000 in the December peak. Source: the [FAAN 2025 report, Nairametrics](https://nairametrics.com/2026/06/07/nigerias-domestic-air-passenger-traffic-hits-13-09-million-in-2025-faan/). These are agent-reported, not published fare data.
+- Scheduled domestic seat capacity was reported at 1.22 million in August 2026 ([Nairametrics, 5 Aug 2026](https://nairametrics.com/2026/08/05/nigerias-scheduled-airline-seat-capacity-rises-37-to-1-22-million-in-august/)). The headline is the only figure we have seen, so it is noted but not used to rank routes.
+
+**Domestic Wave 1 remains:** Lagos–Abuja, Lagos–Port Harcourt, Lagos–Asaba. **Abuja-origin domestic routes are not yet evidenced.** Abuja handled about 12,155 domestic passengers a day in 2024, but no route-level data supports choosing which Abuja domestic routes to launch first. This is a gap to close with supplier data.
+
+### Abuja as an international hub
+
+Abuja is a full international departure point in this data, and it is the stronger origin for European and North African routes:
+- Nonstop from Abuja in the August 2025 snapshot: London (British Airways), Paris, Frankfurt, Istanbul, Doha, Accra, Addis Ababa, Casablanca, Algiers, Lomé, Abidjan, Douala, Niamey, N'Djamena, Maasai Mara.
+- Abuja handled about 1.0 million international passengers in 2024 (our calculation from daily averages).
+
+Wave 1 international proposal:
+- **From Lagos:** London, Accra, Johannesburg, Dubai, Washington.
+- **From Abuja:** London, Paris, Frankfurt, Istanbul, Doha.
+
+London from both airports is deliberate: it is the largest outbound market, and offering it from both hubs lets us test which airport customers prefer.
+
+### What the supplier data can tell us (evaluation plan, before any licence is bought)
+
+Our supplier connections are the cheapest source of current, bookable data. The evaluation runs first, and a paid data licence is considered only if it fails to answer the questions below.
+
+**Questions the supplier data must answer for each candidate route:**
+1. Does the supplier return offers at all for this route, and for which airlines?
+2. How many distinct flights and departures per week does it return for a sample period?
+3. What is the typical price spread across cabins and days of the week?
+4. What share of offers can be held, and what share allow instant payment only?
+5. How often do offers change between search and quote?
+
+**Test window:** these questions are answered in the Duffel sandbox once access is confirmed. Until then, no route is ranked on supplier evidence.
+
+**Data licence decision:** not purchased. The owner has asked that OAG or Cirium is considered only if the supplier evaluation leaves gaps that matter for launch. We would then need a licence quote and a written justification comparing its cost with the revenue at stake on those routes.
+
+### Commercial viability
+
+Route economics cannot be assessed yet. We have no published international fare data for these routes, no supplier pricing, and no cost of ticketing per route. Commercial viability is assessed per route when supplier pricing is available, using: average selling price, supplier cost (including the $3 per order and 1% managed content fee quoted for Duffel's pay-as-you-go tier, to be confirmed), payment and FX costs, and expected volume.
+
+### Revised decision
+
+Confirm Wave 1 as:
+- **Domestic:** Lagos–Abuja, Lagos–Port Harcourt, Lagos–Asaba (subject to supplier coverage).
+- **International from Lagos:** London, Accra, Johannesburg, Dubai, Washington (subject to supplier coverage).
+- **International from Abuja:** London, Paris, Frankfurt, Istanbul, Doha (subject to supplier coverage).
+
+No route goes live until supplier search, pricing and ticketing are confirmed in writing and tested.

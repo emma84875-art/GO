@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Gateway arch with departure line">
+  <rect width="64" height="64" rx="16" fill="#142B3D"/>
+  <path d="M18 54 V30 A14 14 0 0 1 46 30 V54" fill="none" stroke="#F6F7F5" stroke-width="6"/>
+  <path d="M24 46 L44 26" stroke="#72D6C8" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="48" cy="22" r="6" fill="#B68D5D"/>
+</svg>

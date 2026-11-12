@@ -1,73 +1,96 @@
-# Brand identity (first pass)
+# Brand identity: proposals for approval
 
-Status: **First pass for review.** Files are in `brand/` and `packages/ui/src/tokens.css`. The product name is not final (see "Name" below).
+Status: **Proposals for owner review. Nothing is final.** The approved palette is confirmed below. The two neutral colours and the logo are proposals.
 
-## Direction
+Files:
+- `packages/ui/src/tokens.css`: colour and type tokens, light and dark themes
+- `brand/logo-mark-navy.svg`, `brand/logo-mark-porcelain.svg`: first-pass mark (**not recommended**, see below)
+- `brand/concepts/alt-a-g-monogram.svg`, `brand/concepts/alt-b-gateway-arch.svg`, `brand/concepts/alt-c-route-points.svg`: alternative concepts
 
-Minimalist, sophisticated, international and trustworthy. Calm rather than loud. Generous space, a restrained palette, and one signature detail (the flight arc) rather than decoration.
+---
 
-We deliberately avoid the visual language of Expedia, Wakanow and Booking.com: no orange or blue-heavy call-to-action palettes, no bright promotional banners, no "deal" styling, and no imitation of their logos or layouts.
-
-## Palette
+## 1. Approved palette (unchanged)
 
 | Name | Hex | Role |
 |---|---|---|
 | Midnight Navy | `#142B3D` | Primary text (light), background (dark) |
 | Deep Teal | `#006B64` | Primary action and links (light) |
-| Sea Glass | `#72D6C8` | Primary action and accents (dark), highlights (light) |
-| Champagne | `#B68D5D` | Signature detail, decorative accents |
+| Sea Glass | `#72D6C8` | Primary action and accents (dark), fills and highlights (light) |
+| Champagne | `#B68D5D` | Signature accent, decorative and non-text on light; text allowed on the dark background only |
 | Porcelain | `#F6F7F5` | Background (light), primary text (dark) |
 
-Typography: **Inter** throughout, with system fallbacks.
+Typography: Inter, with system fallbacks. Light and dark themes, following the operating system by default, with a saved override.
 
-## Contrast (WCAG 2.x, checked)
+---
 
-Passing pairs for body text and controls are marked. Ratios under 4.5:1 are not used for text.
+## 2. Neutral colours for approval
 
-| Use | Foreground on background | Ratio | Result |
+Two colours are outside the approved palette. They are needed so cards and surfaces have contrast. These are the exact proposals:
+
+| Token | Proposed hex | Used for | Contrast |
 |---|---|---|---|
-| Light body text | Navy on Porcelain | 13.55:1 | AA pass |
-| Light primary button | Porcelain on Deep Teal | 5.94:1 | AA pass |
-| Light links | Deep Teal on Porcelain | 5.94:1 | AA pass |
-| Light links on white surface | Deep Teal on white | 6.39:1 | AA pass |
-| Dark body text | Porcelain on Navy | 13.55:1 | AA pass |
-| Dark body text on card surface | Porcelain on `#1B3749` | 11.57:1 | AA pass |
-| Dark primary and links | Sea Glass on Navy | 8.43:1 | AA pass |
-| Dark primary button | Navy on Sea Glass | 8.43:1 | AA pass |
-| Champagne text on dark background | Champagne on Navy | 4.82:1 | AA pass (normal text) |
-| Champagne text on light background | Champagne on Porcelain | 2.81:1 | **Fails. Decorative only.** |
-| Champagne text on dark card surface | Champagne on `#1B3749` | 4.12:1 | **Fails. Not for text on surfaces.** |
-| Deep Teal text on dark background | Deep Teal on Navy | 2.28:1 | **Fails. Not used.** |
+| Light surface (cards, panels) | `#FFFFFF` | Card background on light theme | Navy text on white: **14.56:1** (AA pass). Deep Teal text on white: **6.39:1** (AA pass) |
+| Dark surface (cards, panels) | `#1B3749` | Card background on dark theme | Porcelain text on `#1B3749`: **11.57:1** (AA pass). Sea Glass on `#1B3749`: **7.20:1** (AA pass). Champagne on `#1B3749`: **4.12:1** (fails AA for text, so no text in Champagne on cards) |
 
-Two colours are not in the brand palette: `#FFFFFF` (light surface) and `#1B3749` (dark surface). They are neutral extensions chosen to keep the contrast ratios above. The owner should confirm them.
+**Recommendation:** approve both. Without a dark surface, dark-theme cards would sit on the Midnight Navy background with no separation. `#1B3749` is a lightened Midnight Navy, so it stays in the same family. `#FFFFFF` is the standard light surface.
 
-## Theme behaviour
+---
 
-- Light and dark themes are defined in `packages/ui/src/tokens.css`.
-- By default the theme follows the operating system setting.
-- A `data-theme` attribute on the page root overrides it, so a customer's choice can be saved.
-- Focus rings use a visible colour in both themes.
+## 3. Logo: the first pass is not recommended
 
-## Logo
+The first-pass mark is a Sea Glass arc from a Porcelain dot to a Champagne dot, on a Midnight Navy tile.
 
-Two versions of the brand mark, in `brand/`:
+**It fails the owner's standard:**
+- At 16 and 24 pixels the two dots disappear, and the arc reads as a generic trend or curve icon.
+- It is not distinctive. A curved line on a tile is a common icon style.
 
-- `brand/logo-mark-navy.svg`: navy tile, sea-glass arc, champagne arrival point. For light backgrounds.
-- `brand/logo-mark-porcelain.svg`: porcelain tile, navy arc, teal departure point and champagne arrival point. For dark or photographic backgrounds.
+I tested it at 256, 64, 32, 24 and 16 pixels. It is withdrawn.
 
-**Concept:** a single flight arc from a departure point to an arrival point, with the arrival marked in champagne. It stands for a journey that starts in Nigeria and reaches the world, and it avoids the usual globe, plane silhouette or map cliché.
+---
 
-**Not yet done:** a wordmark. The wordmark needs Inter converted to outlines, which must be done with a font tool so the logo does not depend on the font being installed. This also needs the final product name.
+## 4. Alternatives (tested at 256, 64, 32 and 16 pixels)
 
-## Name
+All three use the approved palette, one tile shape (rounded square, radius 16 of 64), and no detail smaller than about 4 pixels at 64.
 
-The repository is called "GO", and the README calls it "a global travel platform". "GO" is a very common word and name, so it is probably not registrable as a trademark and is unlikely to stand out in search.
+### Concept A: monogram G with departure terminal
 
-**Before any public use, the name needs a trademark clearance search** in Nigeria (Trademarks Registry) and in the markets we plan to enter, by qualified counsel. Until then, treat "GO" as a working title.
+- Sea Glass ring with a gap at upper right, a Sea Glass crossbar, and a Champagne dot at the gap.
+- **Reads clearly as a G at every size.** The gap makes it a departure point.
+- **Concern:** the Sea Glass ring and crossbar strongly resemble the widely used "G" of a large search company. A G monogram is also the most common letter mark. This is a **trademark and originality risk**, and it would need a similarity search before use.
+- File: `brand/concepts/alt-a-g-monogram.svg`
 
-## Decisions needed
+### Concept B: gateway arch with departure line (recommended)
 
-1. Confirm the two extra neutral colours (`#FFFFFF`, `#1B3749`).
-2. Confirm the product name, and whether we need a wordmark.
-3. Confirm the logo concept, or ask for alternatives.
-4. Commission a trademark search on the final name.
+- Porcelain arch (a doorway or gateway, which suits international travel), a Sea Glass departure line from inside the arch to the upper right, and a Champagne point beyond it.
+- **Distinctive**: a doorway with a departure line is not a letter or a common travel symbol.
+- **Recognisable at 16 pixels**: the arch and line remain readable, and the Champagne point is enlarged to 6 units to survive small sizes.
+- **Concern:** an arch is a common architectural motif, so it still needs a trademark similarity search.
+- File: `brand/concepts/alt-b-gateway-arch.svg`
+
+### Concept C: two points on a route
+
+- Porcelain dot at origin, Champagne square at destination, and a dotted Sea Glass route between them.
+- **Fails at small sizes**: the dotted route turns into noise at 16 and 24 pixels.
+- **Concern:** a dotted route between two points is common in mapping and logistics.
+- File: `brand/concepts/alt-c-route-points.svg`
+
+### Assessment
+
+| Test | A: G monogram | B: gateway arch | C: route points |
+|---|---|---|---|
+| Distinctive | Medium: common letter form | High | Low: common mapping motif |
+| Recognisable at 16 px | Yes | Yes (with enlarged point) | No |
+| Original (no close resemblance) | **At risk**: resembles a major search brand's G | Probable, subject to search | Probable, subject to search |
+| Fits "international, trustworthy, minimalist" | Yes | Yes | Partly |
+
+**Recommendation: Concept B**, subject to a trademark and similarity search by counsel.
+
+---
+
+## 5. Open items
+
+1. **Approve or amend the two neutral colours** (section 2).
+2. **Choose a logo direction**: B recommended; A is available only if the owner accepts the resemblance risk; C is not recommended.
+3. **Product name**: "GO" is a working title. It is common, and it needs a trademark search by Nigerian counsel. A name that is more distinctive would also help the logo.
+4. **Wordmark**: not yet designed. It needs the final name, Inter converted to outlines, and a check at small sizes.
+5. **Trademark and similarity searches** for the final name and the chosen mark (tracked in `docs/10`).

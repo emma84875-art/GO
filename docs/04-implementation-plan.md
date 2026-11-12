@@ -326,3 +326,21 @@ Access follows section 3: `support` reads and adds notes; `admin` acts.
 3. You approve or amend the email and monitoring recommendations.
 4. Package installs are enabled through the approved network setting. I cannot change that setting from inside the environment.
 5. Once steps 1 and 4 are done, Phase 1 starts.
+
+---
+
+## 15. Status after the owner's second decision round (12 Nov 2026)
+
+| Decision | Status | Where |
+|---|---|---|
+| Money-safety principle | Approved in principle, pending the owner's full review of `06` | `06` |
+| Naira payments | Option A preferred; Option B **not approved**; Option C excluded; production payments disabled until written confirmation, technical test and owner approval | `06` |
+| Email and monitoring | Options presented in full. **Nothing purchased, created or activated.** Owner to approve | `08` |
+| Wave 1 routes | Revised proposal: domestic Lagos–Abuja, Lagos–Port Harcourt, Lagos–Asaba; international from Lagos (London, Accra, Johannesburg, Dubai, Washington) and from Abuja (London, Paris, Frankfurt, Istanbul, Doha). Subject to supplier coverage | `07` |
+| Data licence (OAG or Cirium) | **Not purchased.** Supplier data evaluated first | `07` |
+| Neutral colours | Proposed: `#FFFFFF` (light surface), `#1B3749` (dark surface). Owner to approve | `09` |
+| Logo | First pass withdrawn. Concept B (gateway arch) recommended; Concept A carries resemblance risk; Concept C fails at small sizes. Owner to choose | `09` |
+| Legal counsel | **None appointed.** Review register prepared. Counsel to be appointed before production launch | `10` |
+| Package installs | **Still blocked** at the time of this update. Owner to enable through the approved settings | this document |
+
+**Blocked until the owner acts:** Phase 1 (scaffold and tests that need packages), any supplier or payment sandbox, and any production activity.
