@@ -50,10 +50,33 @@ export interface Offer {
 
 export type SupplierMode = 'mock' | 'sandbox' | 'production';
 
+// Passenger data sent to a supplier when placing a hold. Travel-document numbers are
+// deliberately absent: they are sent only when a route requires them and the storage
+// and retention review is complete.
+export interface HoldPassenger {
+  readonly type: 'adult' | 'child' | 'infant';
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly dateOfBirth: string; // YYYY-MM-DD
+  readonly nationality: string; // ISO 3166-1 alpha-2
+}
+
+export interface HoldResult {
+  readonly holdId: string;
+  readonly status: 'held'; // a hold is NOT a ticket or a confirmed booking
+  readonly expiresAtUtc: string; // seats are held until this moment
+}
+
 export interface FlightSupplier {
   readonly name: string;
   readonly mode: SupplierMode;
+  readonly capabilities: { readonly holds: boolean };
   search(request: SearchRequest): Promise<readonly Offer[]>;
+  // Re-prices an offer just before it is held or paid for. Throws
+  // SupplierUnavailableError("offer_expired") if the offer can no longer be sold.
+  priceOffer?(offer: Offer, nowUtc: string): Promise<Offer>;
+  // Places a hold. The key makes retries safe: the same key must never create a second hold.
+  createHold?(offer: Offer, passengers: readonly HoldPassenger[], idempotencyKey: string, nowUtc: string): Promise<HoldResult>;
 }
 
 // Thrown by adapters when a supplier cannot answer. The reason is machine-readable
@@ -64,7 +87,8 @@ export type SupplierFailureReason =
   | 'timeout'
   | 'provider_error'
   | 'invalid_response'
-  | 'fx_unavailable';
+  | 'fx_unavailable'
+  | 'offer_expired';
 
 export class SupplierUnavailableError extends Error {
   readonly reason: SupplierFailureReason;

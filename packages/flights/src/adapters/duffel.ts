@@ -204,6 +204,9 @@ function applyDisplayCurrency(
 export class DuffelFlightSupplier implements FlightSupplier {
   readonly name = 'duffel';
   readonly mode: 'sandbox' | 'production';
+  // Holds stay off until Duffel's hold rules are verified in the sandbox. A hold is
+  // only possible where the offer does not require instant payment (see docs/05).
+  readonly capabilities = { holds: false };
   private readonly config: DuffelConfig;
 
   constructor(config: DuffelConfig) {

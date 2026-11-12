@@ -6,7 +6,16 @@
 
 import type { CurrencyCode } from '../../../core/src/money.ts';
 import { money } from '../../../core/src/money.ts';
-import type { CabinClass, FlightSupplier, Offer, SearchRequest, Segment } from '../supplier.ts';
+import {
+  SupplierUnavailableError,
+  type CabinClass,
+  type FlightSupplier,
+  type HoldPassenger,
+  type HoldResult,
+  type Offer,
+  type SearchRequest,
+  type Segment,
+} from '../supplier.ts';
 
 interface Route {
   readonly origin: string;
@@ -49,7 +58,33 @@ const MOCK_USD_RATES: Record<CurrencyCode, number> = {
 
 export class MockFlightSupplier implements FlightSupplier {
   readonly name = 'mock';
-  readonly mode = 'mock' as const;
+  readonly mode = "mock" as const;
+  readonly capabilities = { holds: true };
+
+  // Fixture behaviour: an offer is valid until its expiry, then reports expired.
+  async priceOffer(offer: Offer, nowUtc: string): Promise<Offer> {
+    if (Date.parse(offer.expiresAtUtc) <= Date.parse(nowUtc)) {
+      throw new SupplierUnavailableError("offer_expired", "Fixture offer has expired");
+    }
+    return offer;
+  }
+
+  // Fixture hold. The hold id is derived from the idempotency key, so a retry with the
+  // same key returns the same hold and cannot create a second one.
+  async createHold(
+    offer: Offer,
+    passengers: readonly HoldPassenger[],
+    idempotencyKey: string,
+    nowUtc: string,
+  ): Promise<HoldResult> {
+    if (passengers.length === 0) throw new RangeError("A hold needs at least one passenger");
+    await this.priceOffer(offer, nowUtc);
+    return {
+      holdId: "fixture_" + idempotencyKey.replace(/[^a-z0-9]+/gi, "_"),
+      status: "held",
+      expiresAtUtc: addMinutes(nowUtc.replace(/\.\d{3}Z$/, "Z"), 30),
+    };
+  }
 
   async search(request: SearchRequest): Promise<readonly Offer[]> {
     const infants = request.infants ?? 0;
