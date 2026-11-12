@@ -60,7 +60,15 @@ We are [COMPANY LEGAL NAME], a company incorporated in Nigeria (CAC registration
 - Which of these airlines are available via direct API connection, and which via aggregated content?
 - How current is the inventory, and how do you handle fare changes between search and payment?
 
-**7. Data protection and legal**
+**7. Holds, balance and fulfilment sequence**
+- For which offers and airlines can an order be held? Which ones have `requires_instant_payment` set to false, and which airlines are supported for holds on Nigerian-origin itineraries?
+- How long is the hold? What is the price guarantee window (`price_guarantee_expires_at`), and what happens after it expires?
+- Does a hold guarantee ticketing, or only seat space? If only seat space, what is the failure rate we should expect when paying a held order?
+- How is a Duffel balance funded, and is there a minimum balance? Can we pay a held order from balance, and how quickly do tickets appear after payment?
+- If ticketing fails after payment, what error codes do you return, and what refund or cancellation route applies?
+- If we pay for tickets before we collect from the customer, what cancellation rules apply if the customer does not pay?
+
+**8. Data protection and legal**
 - What data do you hold about our customers, where is it stored, and how long is it retained?
 - Will you act as a processor or controller for passenger data? Please share your data processing agreement.
 - Can you share your services agreement and any Nigeria-specific terms?

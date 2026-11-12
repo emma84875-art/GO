@@ -1,0 +1,76 @@
+/*
+ * Design tokens: light and dark themes.
+ *
+ * Contrast rules (checked, WCAG 2.x):
+ *  - Champagne is never used for text on light backgrounds (2.81:1, fails AA).
+ *  - Deep Teal is never used for text on Midnight Navy (2.28:1, fails AA).
+ *  - Body text: Midnight Navy on Porcelain 13.55:1; Porcelain on Midnight Navy 13.55:1.
+ *
+ * Theme selection: follows the operating system by default. The data-theme
+ * attribute on <html> overrides it ("light" or "dark").
+ */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #F6F7F5;          /* Porcelain */
+  --color-surface: #FFFFFF;
+  --color-text: #142B3D;        /* Midnight Navy */
+  --color-primary: #006B64;     /* Deep Teal */
+  --color-on-primary: #F6F7F5;  /* 5.94:1 on Deep Teal */
+  --color-link: #006B64;        /* 5.94:1 on Porcelain */
+  --color-accent: #B68D5D;      /* Champagne: decorative and non-text only */
+  --color-highlight: #72D6C8;   /* Sea Glass: fills and borders, not text */
+  --color-focus: #006B64;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #142B3D;        /* Midnight Navy */
+    --color-surface: #1B3749;
+    --color-text: #F6F7F5;      /* Porcelain: 13.55:1 on Midnight Navy */
+    --color-primary: #72D6C8;   /* Sea Glass: 8.43:1 on Midnight Navy */
+    --color-on-primary: #142B3D;/* 8.43:1 on Sea Glass */
+    --color-link: #72D6C8;
+    --color-accent: #B68D5D;    /* Champagne: 4.82:1 on Midnight Navy background (text OK there); 4.12:1 on the dark surface (text NOT OK on surfaces) */
+    --color-highlight: #006B64;
+    --color-focus: #72D6C8;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #142B3D;
+  --color-surface: #1B3749;
+  --color-text: #F6F7F5;
+  --color-primary: #72D6C8;
+  --color-on-primary: #142B3D;
+  --color-link: #72D6C8;
+  --color-accent: #B68D5D;
+  --color-highlight: #006B64;
+  --color-focus: #72D6C8;
+}
+
+:root {
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --space-unit: 4px;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+a {
+  color: var(--color-link);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}

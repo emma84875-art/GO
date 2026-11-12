@@ -1,349 +1,328 @@
-# Implementation plan (for review)
+# Implementation plan v2
 
-Status: **PROPOSAL. Awaiting approval.** No major implementation starts until this plan is approved. Built on `docs/01-commercial-dependencies.md`, `docs/02-architecture.md`, and the milestone 1 status in `docs/03-milestone-1-status.md`.
+Status: **Revised for review.** Incorporates the owner's decisions of 12 Nov 2026. Supersedes v1 (commit `02f993d`).
 
-Current state of the repo: domain core (money, booking status, time), a mock flight supplier, the initial database schema with row-level security, and 35 automated checks (22 unit tests, 13 database checks). The Next.js app does not exist yet.
+Related documents:
+- `01-commercial-dependencies.md`: suppliers, payments, IATA, compliance (external dependency register)
+- `02-architecture.md`: architecture principles and data model
+- `03-milestone-1-status.md`: what is built and verified
+- `05-duffel-enquiry.md`: supplier enquiry draft (not sent)
+- `06-booking-payment-fulfilment-policy.md`: **binding money-safety policy**
+- `07-launch-route-strategy.md`: launch routes (proposal)
+- `08-tooling-recommendations.md`: email and monitoring (recommendations, nothing purchased)
+- `09-brand-identity.md`: brand direction and tokens (first pass)
 
 ---
 
 ## 0. Ground rules
 
-- No supplier, payment, or FX integration goes to production until its row in the dependency table (section 11) is confirmed in writing.
-- Sandbox and production are configured separately. Production adapters refuse to load unless their provider is in `APPROVED_PROVIDERS`.
-- No credentials are created, guessed, or hard-coded. Each provider's keys come from that provider after approval.
-- A booking is never presented as a ticket until the supplier returns ticket numbers.
+1. **We never take a customer's money before we know the flight can be ticketed.** This is the first rule of the platform. See `06`.
+2. No production payment or ticketing is activated without written approval from the provider and the owner.
+3. No supplier, payment or other commercial agreement, subscription or paid service is bought or signed without the owner's approval.
+4. No supplier capability is assumed. A capability is "confirmed" only when the provider has confirmed it in writing.
+5. Sandbox and production are configured separately, and production adapters refuse to load unless approved.
+6. Credentials come from the provider after approval. None are created, guessed or committed.
+7. Legal and data-protection matters go to qualified Nigerian professionals. Ticketing arrangements go to an authorised supplier or consolidator.
 
 ---
 
 ## 1. Frontend and backend architecture
 
-**Frontend:** Next.js (App Router), TypeScript, Tailwind CSS. Server Components by default. Client Components only for interactive parts (search filters, booking forms, payment handoff).
+**Decided:**
+- **Frontend and backend:** Next.js (App Router) and TypeScript. No second framework.
+- **Background jobs:** **pg-boss**, a job queue stored in our PostgreSQL database. No additional vendor. Jobs are defined in a separate `packages/jobs` module so the queue can be swapped later without touching business logic.
+- **Workspace tooling:** **npm workspaces**, already in use.
+- **Hosting:** Vercel (application) and Supabase (Postgres, Auth, Storage). Region to be confirmed for latency to Nigeria and supplier APIs.
 
-**Backend:** Next.js route handlers and server actions for request/response work. Long-running work (supplier ticketing, payment reconciliation, retries, email) runs as background jobs, so a slow supplier response never blocks a customer request.
-
-**Background jobs (decision required):**
-- Option A: pg-boss, a job queue stored in our own Postgres. No extra vendor, simple to operate.
-- Option B: a hosted workflow service (for example Inngest or Trigger.dev). Better retry tooling and observability, but adds a vendor and a data-processing agreement.
-- *Recommendation:* Option A for milestone 2, reviewed before production.
-
-**Repository layout** (as in `02-architecture.md`):
+**Repository layout:**
 
 ```
 apps/web               Next.js app: public site, search, booking, account, admin
-packages/core          domain: money, time, booking state machine, validation
-packages/flights       FlightSupplier interface, mock, Duffel (later)
-packages/payments      PaymentProvider interface, mock, providers (later)
-packages/crypto        crypto payment interface (later, separate spec)
-packages/jobs          job definitions and workers
-packages/ui            shared components and design tokens
-supabase/              migrations, tests, seeds (sandbox data only)
-docs/                  decisions, audits, plans, enquiries
+packages/core          domain: money, time, booking and ticket status, validation
+packages/flights       FlightSupplier interface, mock adapter, Duffel adapter (later)
+packages/payments      PaymentProvider interface, mock adapter, Paystack, Flutterwave (later)
+packages/crypto        crypto payment interface (later, separate specification)
+packages/jobs          pg-boss setup, job definitions, workers
+packages/ui            design tokens and shared components
+supabase/              migrations, tests, sandbox seeds only
+brand/                 logo files
+docs/                  decisions, policies, plans, enquiries
 ```
 
-**Workspace tooling (decision required):** npm workspaces (already used in `package.json`) or pnpm workspaces (faster, stricter dependency isolation). *Recommendation:* pnpm, if you agree to the extra tool.
-
-**Hosting:** Vercel for the Next.js app; Supabase for Postgres, Auth and Storage. Region choice to be confirmed for latency to Nigeria and to supplier APIs.
+**Job architecture (modular):**
+- Each job is a small, named, idempotent function with an input schema.
+- Jobs are enqueued by domain services, never by UI code.
+- Every job records its outcome in `booking_events` where it affects a booking.
+- Retry policy is set per job. Money-moving jobs never retry blindly; they check current state first.
 
 ---
 
 ## 2. Database structure and relationships
 
-The schema in `supabase/migrations/20261112000000_initial_schema.sql` is the starting point.
+The current schema is in `supabase/migrations/20261112000000_initial_schema.sql`, with 13 database checks passing.
 
-**Current tables and relationships:**
-
-- `profiles` (1 per auth user) → `searches`, `bookings`
-- `bookings` (1 per booking) → `booking_segments` (1..n), `passengers` (1..n), `payments` (0..n), `tickets` (0..n, one per passenger segment set)
-- `audit_log` (append-only, linked by text reference to any entity)
-
-**Planned additions (milestone 2 and later):**
+**Additions for milestone 2 and later:**
 
 | Table | Purpose | Key constraints |
 |---|---|---|
-| `offers` | Snapshot of an offer at quote time (supplier offer ID, prices, expiry, fare rules) | Expiry enforced; price re-checked before payment |
-| `booking_events` | Ordered history of status changes per booking | Append-only; referenced by the audit log |
-| `refunds` | Refund requests and outcomes per payment | Amount ≤ captured amount, enforced in code and by check |
+| `offers` | Snapshot at quote time (supplier offer ID, prices, expiry, fare rules) | Expiry enforced; re-priced before payment |
+| `booking_events` | Ordered history of every booking state change | Append-only |
+| `payment_authorisations` | Authorisation holds per booking (amount, provider reference, expiry) | One active authorisation per booking; amount fixed |
+| `payment_captures` | Captures per authorisation | Captured total ≤ authorised amount; only after ticketing |
+| `refunds` | Refunds and reversals per payment | Amount ≤ captured amount |
+| `supplier_orders` | Supplier order IDs and raw status | Unique per supplier and order ID |
+| `ticket_jobs` | Ticketing attempts with idempotency key | One active attempt per booking |
 | `fx_rates` | Rate snapshots used per booking | Immutable once used |
-| `provider_configs` | Which providers are enabled per environment, and their mode | Changes logged; production change requires admin role |
-| `supplier_orders` | Supplier order IDs and raw status per booking | One per booking; unique on supplier + order ID |
-| `ticket_jobs` | Ticketing attempts and results | Idempotency key per booking so retries never double-issue |
-| `webhook_events` | Received provider webhook IDs | Unique on provider + event ID |
+| `provider_configs` | Enabled providers per environment | Changes logged; production change needs two admins |
+| `webhook_events` | Received provider events | Unique per provider and event ID |
 
-**Money and time rules (already enforced):**
-- All amounts are integers in minor units with a currency code.
-- All timestamps are `timestamptz`. Display uses the airport's time zone.
+**Invariants (enforced in schema or tests):** the six money-safety invariants in `06`, plus integer minor units and `timestamptz` throughout.
 
-**Open design question:** passenger travel-document numbers. They are needed by most airlines for ticketing. Storage requires field-level encryption, access logging and a retention rule (section 9). Decision needed before milestone 3.
+**Passenger travel documents:** needed by airlines for ticketing. Storage waits for the data-protection review and a field-encryption design. Milestone 3 at the earliest.
 
 ---
 
 ## 3. Authentication and user permissions
 
-**Authentication:** Supabase Auth. Email and password with verified email; one-time-code sign-in as an option. Multi-factor authentication for staff roles (required) and optional for customers.
-
-**Roles:**
-- `customer`: own profile, own searches, own bookings, own passengers and tickets
-- `support`: read all bookings, payments and tickets for case handling; can add internal notes; cannot change money or status fields
-- `admin`: manage users and roles, provider configuration, pricing rules; all admin actions logged
-
-**Enforcement layers:**
-1. Database row-level security (already implemented and tested).
-2. Server checks in route handlers and server actions. Every server action states the role it requires.
-3. UI hides actions the role cannot use. This is cosmetic only; the server and database are the real controls.
-
-**Role changes:** only admins, through a logged server action, using the service role. Users cannot change their own role (enforced by trigger and tested).
-
-**Session handling:** secure, HTTP-only cookies via Supabase SSR helpers. Refresh-token rotation. Idle timeout for staff sessions.
+- **Authentication:** Supabase Auth. Email and password with verified email. Multi-factor authentication required for `support` and `admin`, optional for customers.
+- **Roles:** `customer`, `support` (read-only on money fields, can add notes), `admin` (manages users, providers and pricing, all actions logged).
+- **Enforcement:** database row-level security (implemented and tested), then server checks in every server action, then UI hiding (cosmetic only).
+- **Role changes:** admin only, through a logged action. A user cannot change their own role (enforced by trigger, tested).
+- **Sessions:** secure HTTP-only cookies via Supabase SSR helpers, refresh-token rotation, idle timeout for staff.
 
 ---
 
-## 4. Flight supplier integration and adapter architecture
+## 4. Flight supplier integration and adapters
 
-**Interface:** `FlightSupplier` (`packages/flights/src/supplier.ts`) with `search`, `priceOffer`, `createOrder`, `issueTicket`, `cancelOrder`, `getOrder`. Booking logic depends only on this interface.
-
-**Adapters:**
-- `mock`: deterministic, for development and tests. Built in milestone 2.
-- `duffel`: built only after Duffel sandbox access is confirmed (milestone 3).
-- Future: Amadeus or Sabre, if a commercial agreement makes them viable.
-
-**Each adapter must pass the same contract test suite:**
-- Search returns offers with currency, expiry and segments in UTC with IANA zones.
-- Pricing a stale offer fails cleanly, and the booking flow re-prices before payment.
-- Order creation is idempotent using our booking ID as the key.
-- Ticketing returns one ticket number per passenger, or a clear failure.
-- Errors are mapped to our error categories (retryable, customer-fixable, terminal).
-- Raw supplier payloads are stored (redacted) for audit and support.
-
-**Mode separation:** the adapter's mode (`mock`, `sandbox`, `production`) comes from configuration. Production mode requires approval (section 0).
-
-**Rate limits and caching:** search results cached for a short period (minutes, not hours) because prices change. Cache keys include passenger count, cabin and dates.
+- **Interface:** `FlightSupplier` with `search`, `priceOffer`, `createHold`, `createOrder`, `issueTicket`, `cancelOrder`, `getOrder`. Booking logic depends only on this interface.
+- **Mock adapter:** built in milestone 2, used for all development and tests until a sandbox is confirmed.
+- **Duffel adapter:** built after Duffel sandbox access is confirmed in writing (milestone 3). Holds are used only where the offer's `requires_instant_payment` is `false`, and the code checks that flag per offer.
+- **Contract test suite:** every adapter must pass the same tests: UTC times with correct IANA zones, expired offers rejected, idempotent order creation, one ticket per passenger or a clear failure, errors mapped to retryable, customer-fixable and terminal categories, raw payloads stored redacted.
+- **Coverage is unverified.** No supplier is assumed to cover any airline or route until its response confirms it (see `07`).
 
 ---
 
 ## 5. Flight search and booking workflows
 
-**Search:**
-1. Customer enters origin, destination, dates, passengers, cabin and display currency.
-2. Server validates input (airport codes, date not in the past, passenger range).
-3. Server calls the active supplier. Results are shown with display prices in NGN (or the chosen currency), with FX rate and timestamp recorded.
-4. Results show local departure and arrival times, durations, and stops.
+Full order of operations is in `06`. Summary:
 
-**Quote:** selecting an offer creates a `quoted` booking with a price-lock window (for example 15 minutes). The offer is re-priced with the supplier at this step.
+1. **Search:** validated input, supplier search, prices in NGN with FX rate and timestamp recorded.
+2. **Quote:** offer re-priced with the supplier; price locked for a short window.
+3. **Passenger details:** validated against nationality and destination rules, stored as data.
+4. **Hold (preferred):** supplier hold created where the offer allows it. Records the payment deadline and price guarantee. Where no hold is possible, the fare is re-priced immediately before payment.
+5. **Authorise:** customer's payment method authorised for the total. **Not captured.**
+6. **Ticket:** supplier paid and tickets issued. Every passenger's ticket number verified.
+7. **Capture:** only after ticketing is confirmed. If ticketing failed, the authorisation is released.
+8. **Confirm:** itinerary and ticket numbers sent to the customer.
 
-**Booking and payment order (decision required):**
-- Option A: take payment first, then create the supplier order and ticket. Simplest and safest for money, but a failed supplier order needs a refund.
-- Option B: create a supplier hold first (if the supplier supports holds), take payment, then ticket. Fewer refunds, but depends on hold support and hold expiry rules.
-- *Recommendation:* Option A for launch, because it needs no hold support and keeps money handling simple. Confirm with Duffel which option their Managed Content supports.
-
-**Passenger details:** collected after quote. Name must match travel documents exactly. Validation rules are per nationality and destination, stored as data.
-
-**Status transitions:** as defined in `packages/core/src/booking-status.ts`. Every transition writes to `booking_events` and the audit log.
-
-**Failure handling:**
-- Price changed at payment: show the new price; customer confirms or cancels.
-- Offer expired: return to search.
-- Supplier order failed after payment: automatic refund flow, customer notified, support alerted.
-- Ticketing failed: refund flow, not silent retries. Retries only through the admin dashboard with a reason.
+**Blocked until confirmed:** steps 5 to 7 cannot run in production until either a provider's authorisation and capture for NGN cards is confirmed (Option A), or a funded supplier balance arrangement is confirmed (Option B, owner decision). See `06`.
 
 ---
 
-## 6. Payment orchestration (fiat and cryptocurrency)
+## 6. Payment orchestration (fiat and crypto)
 
-**Interface:** `PaymentProvider` with `createPayment`, `verifyWebhook`, `getStatus`, `refund`. Provider-independent booking logic.
+**Decided:**
+- **Primary provider:** **Paystack** for Naira payments, including cards and bank transfer, subject to merchant approval and to confirmation of the authorisation and capture capability for Nigerian merchants.
+- **Alternative provider:** **Flutterwave**, behind the same interface, to be evaluated in the same way.
+- **International cards (Stripe):** evaluated only if Nigerian merchant eligibility is confirmed. Not started.
+- **Cryptocurrency:** separate payment option, built to your crypto specification (not yet in this repo). Requires Nigerian regulatory review before any live use.
 
-**Fiat, Naira first:**
-- Paystack or Flutterwave, for Naira cards and bank transfer, subject to merchant approval (see section 11).
-- Payment is confirmed only by a verified webhook or a server-side status check, never by the browser redirect.
+**Interface:** `PaymentProvider` with `authorise`, `capture`, `release`, `refund`, `verifyWebhook`, `getStatus`. Booking logic never branches on the provider.
+
+**Current facts that limit the design (see `06`):**
+- Paystack's documented card pre-authorisation covers South African merchants and ZAR only. Nigeria is not confirmed.
+- Paystack documentation says a travel agency needs an IATA licence for international payments (earlier research, to be confirmed with Paystack).
+
+**Payment rules:**
+- Payment is confirmed by verified webhook or server-side status check, never by the browser redirect.
 - Webhook signatures verified; event IDs stored for idempotency.
-
-**Fiat, international cards:**
-- Stripe, subject to confirmed eligibility for a Nigerian-incorporated business.
-
-**Cryptocurrency:**
-- Separate payment option, built to your crypto payment specification (not yet provided to this repo).
-- Requires its own regulatory review in Nigeria before any live use. Nothing is built or enabled until that review is complete.
-- Same orchestration interface, so bookings don't branch on payment method.
-
-**Reconciliation:** a daily job compares our payment records with provider settlement reports. Differences create admin tasks.
-
-**Refunds:** initiated by admins or by automated failure flows. Refund amount cannot exceed the captured amount (enforced in code and by database check).
-
-**Card data:** never touches our servers. Hosted payment pages or provider SDKs only.
+- Card data never touches our servers (hosted page or provider SDK).
+- Daily reconciliation against provider settlement reports, with differences raised as admin tasks.
 
 ---
 
 ## 7. Booking management and ticket issuance
 
-**Customer view:** list of bookings with the customer-facing label from `customerStatusLabel`. Itinerary, passengers, ticket numbers (only when issued), receipts, and change or cancellation requests (where supported by the supplier).
-
-**Ticket issuance:**
-- Runs as a background job after payment is confirmed and the supplier order exists.
-- Idempotent: one ticketing attempt per booking at a time, with an idempotency key.
-- On success: ticket numbers saved, ticket status set to `ticketed`, customer notified with the itinerary.
-- On failure: ticket status `ticketing_failed`, refund flow started, admin alerted.
-
-**Ticket issuance authority:** depends on the route we choose (section 11). Until a written agreement exists, ticketing runs only against the mock and sandbox. Production ticketing does not start without it.
-
-**Changes and cancellations:** supported only where the supplier and fare rules allow. Refund amounts follow the fare rules returned by the supplier, not our own rules.
-
-**Notifications:** email (transactional provider to be chosen) and in-app. Templates reviewed by legal before launch.
+- **Customer view:** bookings with the customer-facing label from `customerStatusLabel`. A booking shows "Ticketed" only when ticket numbers are stored.
+- **Ticketing job:** runs after the supplier payment step. Idempotent with a per-booking key. Success stores ticket numbers and sets `ticketed`. Failure sets `ticketing_failed`, releases the authorisation, and alerts support.
+- **No silent retries of money-moving steps.** Retries happen from the admin dashboard with a recorded reason.
+- **Authority to issue tickets:** Duffel's Managed Content (to be confirmed in writing), or an IATA route we do not yet hold. Production ticketing stays off until the authority is confirmed.
+- **Changes and cancellations:** only where the supplier and fare rules allow. Refunds follow the fare rules returned by the supplier.
+- **Notifications:** transactional email provider to be approved (see `08`). Templates reviewed by counsel before launch.
 
 ---
 
 ## 8. Administrative dashboard
 
-**Scope for launch:**
-- Bookings: search by reference, customer, passenger name, route, status. Full history view.
-- Payments: list, status, reconciliation differences, refund actions.
-- Ticketing: failed jobs, retry with reason, manual review queue.
-- Customers: profile view (no passport numbers displayed by default), role management (admin only).
-- Providers: enable or disable providers per environment; production enable requires two admins.
-- Audit log: searchable, read-only.
-- Pricing rules: markup and fee settings, with effective dates and change history.
+- **Bookings:** search by reference, customer, passenger name, route, status; full event history.
+- **Payments:** authorisations, captures, releases and refunds; reconciliation differences.
+- **Ticketing:** failed or stuck jobs; retry with a reason; manual review queue.
+- **Customers:** profile view (no passport numbers by default); role changes (admin only).
+- **Providers:** enable or disable per environment. Production enablement needs two admins.
+- **Pricing rules:** markup and fees, with effective dates and change history.
+- **Audit log:** searchable, read-only. Append-only at the database level.
+- **Alerts:** capture-after-ticketing failures, stuck jobs and reconciliation gaps shown first.
 
-**Access:** `support` sees bookings and payments read-only plus notes; `admin` sees all and can act.
-
-**Build approach:** server-rendered pages with the same role checks as customer pages. No separate admin API surface.
+Access follows section 3: `support` reads and adds notes; `admin` acts.
 
 ---
 
 ## 9. Security and regulatory requirements
 
 **Technical controls:**
-- Secrets only on the server; no secrets in the client bundle, logs, or the repo.
+- Secrets server-side only. Never in the client bundle, logs or repository.
 - Input validation at every server boundary.
-- Rate limiting on login, search and payment initiation.
-- Webhook signature verification and idempotency everywhere.
-- Field-level encryption for travel document numbers and dates of birth, with access logging.
-- Log redaction for personal data and payment references.
-- Dependency scanning and secret scanning on the GitHub repository.
+- Rate limits on login, search and payment initiation.
+- Webhook verification and idempotency everywhere.
+- Field-level encryption for travel documents and dates of birth, with access logging (milestone 3).
+- Personal data and card-related data redacted from logs and error reports.
+- Dependency and secret scanning on the GitHub repository.
 - Security headers, CSRF protection on state-changing routes, HTTPS only.
-- Backups and point-in-time recovery on Supabase, with a tested restore.
+- Supabase backups and point-in-time recovery, with a tested restore.
 
-**Regulatory (needs legal advice before launch):**
-- **Nigeria Data Protection Act 2023:** privacy notice, lawful basis, data processor agreements (Duffel, payment providers, hosting), cross-border transfer assessment, retention schedule, data subject request process, breach notification process.
-- **Consumer protection and airline ticketing rules:** refund and change terms, fare-rule disclosure, complaint handling.
-- **Payments:** confirm whether any part of our flow (for example holding customer funds, or settlement through a third party) triggers CBN licensing.
-- **Crypto:** separate legal review before any use (section 6).
-- **Tax:** VAT and service-fee treatment in Nigeria, FX treatment, and invoicing rules.
-- **AML and KYC:** assess obligations for payment flows and high-value bookings.
+**Regulatory (qualified Nigerian counsel to review before launch):**
+- **Nigeria Data Protection Act 2023:** privacy notice, lawful basis, processor agreements (supplier, payment, email, monitoring, hosting), cross-border transfer assessment, retention schedule, data subject requests, breach notification.
+- **Consumer protection and airline ticketing:** refund and change terms, fare-rule disclosure, complaints.
+- **Payments:** whether any part of our flow triggers CBN licensing (for example, holding customer funds, or settlement through a third party).
+- **Crypto:** separate review before any use.
+- **Tax:** VAT and service fees, FX treatment, invoicing.
+- **AML and KYC:** assessment for payment flows and high-value bookings.
 
-**Operational controls:**
-- Named owner for security and data protection.
-- Incident response plan and contact list.
-- Access reviews for staff accounts each quarter.
+**Operational:** named security and data-protection owners, incident response plan with contacts, quarterly staff access reviews.
 
 ---
 
 ## 10. Testing and deployment
 
 **Testing layers:**
-1. Unit tests: domain logic (money, time, booking state). Already in place (22 tests).
-2. Database tests: RLS, constraints, triggers. Already in place (13 checks against PostgreSQL 16), run in CI against a disposable database.
-3. Adapter contract tests: each supplier and payment adapter runs the same suite. Mock first; sandbox later.
-4. Integration tests: search → quote → payment (test mode) → booking → ticketing (mock or sandbox).
-5. End-to-end browser tests (Playwright): sign-up, search, booking, admin actions.
-6. Accessibility and performance checks on search and checkout (Lighthouse and axe).
-7. Security checks: dependency audit, secret scanning, basic penetration test before launch.
+1. Unit tests for money, time and status logic (22 passing).
+2. Database tests for RLS, constraints, triggers and the audit log (13 passing against PostgreSQL 16).
+3. Adapter contract tests, mock first, sandbox later.
+4. Money-safety tests: the six invariants in `06`, tested before any payment provider is connected.
+5. Integration tests: search → quote → hold → authorise → ticket (mock) → capture (mock) → confirm, including every failure path.
+6. End-to-end browser tests (Playwright): sign-up, search, booking, admin actions.
+7. Accessibility checks (axe and Lighthouse) on search and checkout, using the contrast rules in `09`.
+8. Security checks: dependency audit, secret scanning, penetration test before launch.
 
 **Environments:**
 
 | | Local | Preview | Staging | Production |
 |---|---|---|---|---|
-| App | dev server | per pull request (Vercel) | main branch | release tag |
-| Database | local Postgres or Supabase local | Supabase branch | separate Supabase project | production project |
-| Providers | mock | mock or sandbox | sandbox only | approved providers only |
+| App | dev server | per pull request | `main` branch | release tag |
+| Database | local Postgres | branch database | separate project | production project |
+| Providers | mock | mock | sandbox only | approved providers only |
 | Data | synthetic | synthetic | synthetic | real |
 
-**Pipeline:** lint, type check, unit tests, database tests, build, then preview deploy. Staging deploys on merge to `main`. Production deploys require a release tag, a second reviewer, and passing end-to-end tests on staging.
+**Pipeline:** lint, type check, unit tests, database tests, build, preview deploy. Staging deploys on merge to `main`. Production needs a release tag, a second reviewer, and passing end-to-end tests on staging.
 
-**Database changes:** migrations only, reviewed, applied through the Supabase CLI. No manual changes in production.
+**Database changes:** migrations only, reviewed, applied through the Supabase CLI. No manual production changes.
 
-**Monitoring:** error tracking (for example Sentry, to be chosen), uptime monitoring, job queue monitoring, payment and ticketing failure alerts to the on-call owner.
-
-**Launch checklist:** all section 11 blockers closed, legal review signed off, privacy notice published, support process staffed, rollback plan tested.
+**Monitoring:** Sentry recommended for error tracking (see `08`, not yet approved). Uptime and log tools to be researched.
 
 ---
 
-## 11. Features we can build now, and what depends on others
+## 11. Dependencies: what we can build now, and what waits
 
-### A. Can build now (no external dependency)
+### A. Can build now, with no external dependency
 
-| Work | Milestone |
+| Work | Phase |
 |---|---|
 | Next.js app scaffold, TypeScript, linting, CI | 1 |
-| Sign-up, sign-in, sign-out, profile, role model (uses existing schema) | 1 |
-| Design system and layout (public site, account pages) | 1 |
-| Mock flight search results page | 1 |
-| Booking state machine in the app, status labels | 2 |
-| Mock supplier end-to-end booking flow with mock payment | 2 |
-| Booking history and customer account pages | 2 |
-| Admin dashboard shell, bookings list, audit log view (with mock data) | 2 |
-| Background job system (pg-boss) and its tests | 2 |
-| Email templates (drafts for legal review) | 2 |
+| Brand tokens and design system (light and dark), public layout | 1 |
+| Sign-up, sign-in, profile, role model (uses existing schema) | 1 |
+| Mock search results page | 1 |
+| pg-boss job setup and tests | 2 |
+| Booking state machine in the app, customer status labels | 2 |
+| Mock supplier booking flow with mock authorisation and capture | 2 |
+| Money-safety invariant tests against mocks | 2 |
+| Customer bookings and account pages | 2 |
+| Admin dashboard shell, bookings list, audit log view (mock data) | 2 |
+| Email templates (drafts for counsel review) | 2 |
 
-### B. Depends on an external provider or agreement
+**Blocked by the package-install setting:** all of the above that needs the Next.js build, and any test that needs an installed package. Enabling package installs for this environment is required before Phase 1 can be built and verified.
 
-| Work | Depends on | Status |
+### B. Waiting on a provider, agreement or approval
+
+| Work | Waiting on | Status |
 |---|---|---|
 | Duffel sandbox adapter | Duffel sandbox access | Enquiry drafted, **not sent** |
-| Duffel production adapter | Duffel commercial agreement, Nigerian eligibility | Not started |
-| Ticket issuance in production | Written confirmation of ticketing authority (Duffel Managed Content or IATA route) | Not started |
-| Paystack or Flutterwave payments | Merchant approval (CAC, tax and director documents) | Not started |
+| Duffel production adapter | Commercial agreement; Nigerian merchant eligibility | Not started |
+| Supplier holds | Confirmed per offer (`requires_instant_payment`) and per airline | Only some airlines confirmed by Duffel's guide |
+| Supplier-paid ticketing | Confirmed funding arrangement (Duffel balance) | Not confirmed |
+| Ticketing authority in production | Written confirmation from Duffel or a consolidator | Not started |
+| Paystack payments | Merchant approval; authorisation and capture for NGN cards confirmed | Not started |
+| Flutterwave payments | Merchant approval; authorisation and capture confirmed | Not started |
 | Stripe international cards | Confirmed Nigerian merchant eligibility | Unverified |
 | Amadeus or Sabre | Commercial agreement; Amadeus self-service status unverified | Not started |
 | FX rate provider | Provider choice and agreement | Not started |
-| Email and SMS providers | Provider choice and agreement | Not started |
+| Transactional email (Postmark recommended) | Your approval, DPA, data-residency check, DNS setup | Recommendation only (`08`) |
+| Error monitoring (Sentry recommended) | Your approval, DPA, data-residency check | Recommendation only (`08`) |
+| Route and schedule data (OAG or Cirium) | Your approval and licence purchase | Not started (`07`) |
 
-### C. Depends on regulatory approval or legal advice
+### C. Waiting on regulators, counsel or the trademark process
 
-| Work | Depends on | Status |
+| Work | Waiting on | Status |
 |---|---|---|
-| Live customer data processing | NDPA review, privacy notice, processor agreements | Not started |
-| Storing travel document numbers | Encryption design and retention rule, from the data-protection review | Not started |
-| Live Naira payment collection | Payment licensing review | Not started |
-| Cryptocurrency payments | Crypto regulatory review and your crypto specification | Not started |
-| Own IATA accreditation | NCAA certificate, IATA process (27 requirements, see IATA page) | Not started |
-| Consumer terms and refund policy | Legal review | Not started |
+| Live customer data | NDPA review by Nigerian counsel; privacy notice; processor agreements | Not started |
+| Storing travel document numbers | Encryption design and retention rule | Not started |
+| Live payment collection | Payments and licensing review; provider approval | Not started |
+| Cryptocurrency payments | Nigerian regulatory review; your crypto specification | Not started |
+| Own IATA accreditation | NCAA certificate; IATA requirements (27 items on IATA's Nigeria page) | Not started |
+| Consumer terms and refund policy | Counsel review | Not started |
+| Product name and logo | Trademark clearance search by counsel | Not started |
 
 ---
 
 ## 12. Implementation phases
 
-**Phase 0 (current):** audit, dependency research, Duffel enquiry drafted, this plan. *Exit: plan approved.*
+**Phase 0 (complete):** audit, research, policy, route and tooling recommendations, brand first pass.
 
-**Phase 1: foundation (no external dependencies).** Next.js scaffold, CI, auth flows, profile, design system, mock search page. *Exit: a signed-in customer can search with mock data.* Needs package installs enabled.
+**Phase 1: foundation (blocked on package installs).** Next.js scaffold, CI, brand tokens in the app, sign-up and sign-in, profile, mock search page. *Exit: a signed-in customer searches mock data in light and dark themes, with accessibility checks passing.*
 
-**Phase 2: booking workflow on mocks.** Quote, passenger details, mock payment, mock supplier order, status transitions, customer bookings, admin shell, job system. *Exit: full booking flow passes end-to-end tests on mocks.*
+**Phase 2: booking on mocks (no external dependency).** Quote, hold, passenger details, mock authorisation, mock ticketing, mock capture, customer bookings, admin shell, pg-boss jobs, and the money-safety invariant tests. *Exit: full booking flow and all failure paths pass on mocks.*
 
-**Phase 3: Duffel sandbox.** Duffel adapter against sandbox: search, price, order, ticket (sandbox). Contract tests. *Exit: contract suite passes against Duffel sandbox.* Needs Duffel sandbox access.
+**Phase 3: Duffel sandbox (needs Duffel sandbox access).** Duffel adapter: search, price, hold, order, ticket in sandbox, with contract tests. *Exit: contract suite passes against the sandbox.*
 
-**Phase 4: payments in test mode.** Paystack or Flutterwave test mode through the payment interface; webhook handling; reconciliation job. Stripe only if eligibility is confirmed. *Exit: end-to-end test-mode bookings with payments.* Needs provider test accounts.
+**Phase 4: payments in test mode (needs Paystack test access and the authorisation confirmation).** Paystack authorisation, capture and release in test mode; webhooks; reconciliation. Flutterwave only if needed. *Exit: test-mode bookings complete and every failure path releases money correctly.*
 
-**Phase 5: launch readiness.** Security review, penetration test, legal sign-off, privacy notice, support process, staging soak test, rollback drill. *Exit: launch checklist complete.* Needs all section 11 B and C blockers closed.
+**Phase 5: launch readiness (needs every B and C blocker closed).** Security review, penetration test, counsel sign-off, privacy notice, supplier and payment agreements in force, support process, staging soak test, rollback drill. *Exit: launch checklist complete.*
 
-**Phase 6: production launch in Nigeria** with international departures, starting with a limited set of routes and a capped daily booking volume. *Exit: stable for agreed period.*
+**Phase 6: production launch,** starting with Wave 1 routes from `07`, with a capped daily booking volume.
 
-**Later:** Stripe (if eligible), crypto (if approved), additional suppliers, own IATA accreditation, hotels or other products.
-
----
-
-## 13. Decisions needed from you
-
-1. **Background jobs:** pg-boss (recommended) or a hosted workflow service?
-2. **Workspace tooling:** npm workspaces (current) or pnpm?
-3. **Booking and payment order:** take payment first (recommended) or use supplier holds?
-4. **Payment provider priority:** Paystack or Flutterwave first? (Both can be built behind the same interface.)
-5. **Design direction:** do you have a brand, colours or reference sites for the premium look? If not, I'll propose three directions for you to choose from before building the UI.
-6. **Email provider and monitoring tools:** happy with my suggestions to be confirmed, or do you have preferences?
-7. **Launch routes:** which first routes (for example Lagos to London, Dubai, New York) do you want in the first production release?
-8. **Ownership:** who in your team owns legal, data protection and ticketing decisions?
+**Later:** Stripe (if eligible), crypto (if approved), more routes, more suppliers, own IATA accreditation.
 
 ---
 
-## 14. Immediate next steps
+## 13. Decisions
 
-1. You review this plan and answer section 13.
-2. You send the Duffel enquiry (`docs/05-duffel-enquiry.md`) after filling in the placeholders. I have not sent it.
-3. Package installs are enabled for this environment through the approved network settings. I can't change that setting from inside the environment.
-4. Once steps 1 and 3 are done, I start Phase 1.
+**Resolved by the owner (12 Nov 2026):**
+
+| Decision | Outcome |
+|---|---|
+| Background jobs | pg-boss |
+| Workspace tooling | npm workspaces |
+| Booking order | Holds where supported; revalidate where not; authorise then capture where supported; never charge without a defined fulfilment and failure process |
+| Payment priority | Paystack first (Naira cards and bank transfer); Flutterwave as alternative |
+| Brand | Midnight Navy, Deep Teal, Sea Glass, Champagne, Porcelain; Inter; light and dark; original mark |
+| Tooling | Recommend first; no purchase without approval |
+| Launch routes | Nigeria first, international from day one; proposal in `07` |
+| Ownership | Owner makes business decisions; counsel for legal and data protection; authorised supplier or consolidator for ticketing |
+
+**Still open, needing your decision:**
+
+1. **Approve the money-safety policy** (`06`), including the choice between Option A and Option B for NGN payments. Option B needs a funding decision from you.
+2. **Approve the email and monitoring recommendations** (`08`) before any signup.
+3. **Confirm the Wave 1 route scope** (`07`), and whether to fund an OAG or Cirium data licence.
+4. **Confirm the brand details** (`09`): the two extra neutral colours, the logo concept, and the product name pending a trademark search.
+5. **Engage Nigerian counsel** for data protection, consumer terms, payment licensing and the trademark search. Who is the named contact?
+6. **Confirm the package-install setting** is enabled, so Phase 1 can begin.
+
+---
+
+## 14. Next steps
+
+1. You review `06` and answer the open decisions above.
+2. You send the Duffel enquiry (`05`) after filling in the placeholders, or ask me to prepare a Paystack enquiry on the same basis.
+3. You approve or amend the email and monitoring recommendations.
+4. Package installs are enabled through the approved network setting. I cannot change that setting from inside the environment.
+5. Once steps 1 and 4 are done, Phase 1 starts.

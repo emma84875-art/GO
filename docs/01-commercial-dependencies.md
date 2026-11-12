@@ -124,3 +124,21 @@ Work that does **not** depend on any of the above and can proceed now:
 - Audit logging and environment separation
 
 Production adapters for any provider stay disabled until its row in the table above is marked **Confirmed** and the approval is recorded in this document.
+
+## 8. Register update (12 Nov 2026)
+
+New or changed outstanding dependencies after the owner's decisions:
+
+| # | Dependency | Status | Owner action |
+|---|---|---|---|
+| D1 | Paystack authorisation and capture (pre-auth) for Nigerian merchants, NGN cards | **Unconfirmed.** Documented for South African merchants, ZAR only | Written confirmation from Paystack |
+| D2 | Flutterwave authorisation and capture for Nigerian merchants | Unverified | Written confirmation from Flutterwave |
+| D3 | Duffel balance funding and minimum balance (needed for supplier-paid ticketing, Option B and the ticketing step in Option A) | Not explained on Duffel's payments page | Duffel sales (enquiry section 7) |
+| D4 | Duffel hold coverage by airline and route, and price guarantee rules | Partly documented: only American Airlines and Duffel Airways confirmed by name | Duffel sales |
+| D5 | Whether a hold guarantees ticketing | Not stated; Duffel says documents appear only after payment | Duffel sales |
+| D6 | Duffel coverage of Nigerian domestic airlines and international carriers serving Lagos and Abuja | Unknown | Duffel sales |
+| D7 | Route and schedule data licence (OAG or Cirium) | Not purchased; needs owner approval | Owner decision |
+| D8 | Transactional email provider (Postmark recommended), DPA, data-residency check | Recommendation only; nothing purchased | Owner approval |
+| D9 | Error monitoring (Sentry recommended), DPA, data-residency check | Recommendation only; nothing purchased | Owner approval |
+| D10 | Trademark clearance on the product name ("GO" is a working title) | Not started | Qualified Nigerian counsel |
+| D11 | Two neutral colours outside the brand palette (`#FFFFFF`, `#1B3749`) | Owner to confirm | Owner |
