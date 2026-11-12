@@ -123,3 +123,16 @@ Invariants 1, 4 and 6 are partly enforced in the schema already. The rest go int
 - Policy approval: project owner.
 - Payment-provider and fulfilment terms: confirmed in writing by each provider before activation.
 - Legal review of customer-facing terms, refunds and authorisation wording: qualified Nigerian counsel.
+
+## Approval record update: 12 Nov 2026
+
+| Decision | Status |
+|---|---|
+| Money-safety principle: customer funds must be protected | **Approved** |
+| Option A (preferred approach) | **Preferred** |
+| Option B | **Not approved** |
+| Option C | Excluded (unchanged) |
+| Production payments | **Disabled** until Paystack (or chosen provider) confirms NGN authorisation and capture **in writing** |
+| Ticket issuance and regulated services | **Disabled** until the required approvals are obtained |
+
+No provider confirmation has been received. Payment code remains test-only.

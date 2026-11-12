@@ -1,10 +1,21 @@
 /*
  * Design tokens: light and dark themes.
  *
- * Contrast rules (checked, WCAG 2.x):
- *  - Champagne is never used for text on light backgrounds (2.81:1, fails AA).
- *  - Deep Teal is never used for text on Midnight Navy (2.28:1, fails AA).
- *  - Body text: Midnight Navy on Porcelain 13.55:1; Porcelain on Midnight Navy 13.55:1.
+ * Palette source: sampled from the company GO artwork (brand direction
+ * superseding the earlier Midnight Navy / Deep Teal palette, owner decision
+ * 12 Nov 2026).
+ *   Brand Purple  #512584  (81, 37, 132)
+ *   Brand Orange  #FF5738  (255, 87, 56)
+ *   White         #FFFFFF
+ * Derived shades (NOT yet approved by owner):
+ *   Dark background #2B1248, dark surface #3B1B63, orange-text ink #1A0B2E.
+ *
+ * Contrast rules (computed, WCAG 2.x):
+ *  - Purple on White 10.78:1 (body text OK). White on Purple 10.78:1.
+ *  - White on Orange 3.15:1 FAILS for text. Use dark ink #1A0B2E on Orange (5.90:1).
+ *  - Orange on dark background #2B1248 5.20:1 (text OK). Orange on dark surface #3B1B63 4.38:1 (text FAILS; use non-text only).
+ *  - White on dark background 16.37:1; white on dark surface 13.79:1.
+ *  - Purple on dark background 1.52:1 FAILS. Never use purple as text or a control on dark.
  *
  * Theme selection: follows the operating system by default. The data-theme
  * attribute on <html> overrides it ("light" or "dark").
@@ -13,43 +24,46 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
-  --color-bg: #F6F7F5;          /* Porcelain */
+  --color-bg: #FFFFFF;          /* White */
   --color-surface: #FFFFFF;
-  --color-text: #142B3D;        /* Midnight Navy */
-  --color-primary: #006B64;     /* Deep Teal */
-  --color-on-primary: #F6F7F5;  /* 5.94:1 on Deep Teal */
-  --color-link: #006B64;        /* 5.94:1 on Porcelain */
-  --color-accent: #B68D5D;      /* Champagne: decorative and non-text only */
-  --color-highlight: #72D6C8;   /* Sea Glass: fills and borders, not text */
-  --color-focus: #006B64;
+  --color-text: #512584;        /* Brand Purple: 10.78:1 on White */
+  --color-primary: #512584;     /* Brand Purple fill */
+  --color-on-primary: #FFFFFF;  /* 10.78:1 on Brand Purple */
+  --color-link: #512584;        /* 10.78:1 on White */
+  --color-accent: #FF5738;      /* Brand Orange: decorative and non-text only on light */
+  --color-highlight: #FF5738;   /* Brand Orange fill */
+  --color-on-highlight: #1A0B2E;/* 5.90:1 on Brand Orange: use for labels on orange */
+  --color-focus: #512584;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --color-bg: #142B3D;        /* Midnight Navy */
-    --color-surface: #1B3749;
-    --color-text: #F6F7F5;      /* Porcelain: 13.55:1 on Midnight Navy */
-    --color-primary: #72D6C8;   /* Sea Glass: 8.43:1 on Midnight Navy */
-    --color-on-primary: #142B3D;/* 8.43:1 on Sea Glass */
-    --color-link: #72D6C8;
-    --color-accent: #B68D5D;    /* Champagne: 4.82:1 on Midnight Navy background (text OK there); 4.12:1 on the dark surface (text NOT OK on surfaces) */
-    --color-highlight: #006B64;
-    --color-focus: #72D6C8;
+    --color-bg: #2B1248;        /* Derived dark background: PENDING APPROVAL */
+    --color-surface: #3B1B63;   /* Derived dark surface: PENDING APPROVAL */
+    --color-text: #FFFFFF;      /* 16.37:1 on dark background */
+    --color-primary: #FF5738;   /* Brand Orange as control fill (purple fails on dark) */
+    --color-on-primary: #1A0B2E;/* 5.90:1 on Brand Orange */
+    --color-link: #FF5738;      /* 5.20:1 on dark background */
+    --color-accent: #FF5738;    /* Non-text only on dark surfaces */
+    --color-highlight: #512584; /* Brand Purple as fill/border on dark */
+    --color-on-highlight: #FFFFFF;
+    --color-focus: #FF5738;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-bg: #142B3D;
-  --color-surface: #1B3749;
-  --color-text: #F6F7F5;
-  --color-primary: #72D6C8;
-  --color-on-primary: #142B3D;
-  --color-link: #72D6C8;
-  --color-accent: #B68D5D;
-  --color-highlight: #006B64;
-  --color-focus: #72D6C8;
+  --color-bg: #2B1248;
+  --color-surface: #3B1B63;
+  --color-text: #FFFFFF;
+  --color-primary: #FF5738;
+  --color-on-primary: #1A0B2E;
+  --color-link: #FF5738;
+  --color-accent: #FF5738;
+  --color-highlight: #512584;
+  --color-on-highlight: #FFFFFF;
+  --color-focus: #FF5738;
 }
 
 :root {

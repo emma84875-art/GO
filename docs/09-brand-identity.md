@@ -94,3 +94,13 @@ All three use the approved palette, one tile shape (rounded square, radius 16 of
 3. **Product name**: "GO" is a working title. It is common, and it needs a trademark search by Nigerian counsel. A name that is more distinctive would also help the logo.
 4. **Wordmark**: not yet designed. It needs the final name, Inter converted to outlines, and a check at small sizes.
 5. **Trademark and similarity searches** for the final name and the chosen mark (tracked in `docs/10`).
+
+## Update 12 Nov 2026: brand colours and provisional logo approval
+
+- **Palette superseded.** The owner's company theme is now sampled from the GO artwork: Brand Purple `#512584`, Brand Orange `#FF5738`, White `#FFFFFF`. This replaces the earlier Midnight Navy and Deep Teal palette.
+- **Derived shades need approval:** dark background `#2B1248`, dark surface `#3B1B63`, and ink `#1A0B2E` used on orange.
+- **Contrast (WCAG 2.x):** purple on white 10.78:1; white on purple 10.78:1; white on orange 3.15:1 (fails for text, so use `#1A0B2E` on orange at 5.90:1); orange on dark background 5.20:1; orange on dark surface 4.38:1 (non-text only); purple on dark background 1.52:1 (fails; never use it on dark).
+- **Logo:** "GO" concept approved as provisional direction. Previews delivered: wordmark light and dark, and app icon at 180, 64, 32 and 16 px. These are SVG recreations from the image, not the master artwork. Replace them with the official master file when available.
+- **Trademark risk:** the G letterform (ring with crossbar) and the "GO" name are not cleared. A trademark search is still outstanding. Counsel should review this before launch.
+- **Files:** `brand/logo/go-wordmark-purple.svg`, `brand/logo/go-wordmark-white.svg`, `brand/logo/go-app-icon.svg`, plus PNG previews.
+- `packages/ui/src/tokens.css` updated to the new palette. Structure unchanged.
