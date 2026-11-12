@@ -1,0 +1,15 @@
+{
+  "name": "go-flight-booking",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Premium international flight booking platform (Nigeria first, international departures from launch).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "test:unit": "node --test packages/core/test/core.test.ts packages/flights/test/mock.test.ts",
+    "test:db": "bash scripts/test-db.sh",
+    "test": "npm run test:unit && npm run test:db"
+  }
+}
