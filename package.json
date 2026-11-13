@@ -8,7 +8,7 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "test:unit": "node --test packages/core/test/core.test.ts packages/core/test/foundation.test.ts packages/core/test/booking.test.ts packages/flights/test/mock.test.ts packages/flights/test/search.test.ts packages/flights/test/offer-filters.test.ts packages/flights/test/airports.test.ts packages/flights/test/supplier-responses.test.ts packages/flights/test/booking.test.ts packages/payments/test/payments.test.ts",
+    "test:unit": "node --test packages/core/test/core.test.ts packages/core/test/foundation.test.ts packages/core/test/booking.test.ts packages/flights/test/mock.test.ts packages/flights/test/search.test.ts packages/flights/test/offer-filters.test.ts packages/flights/test/airports.test.ts packages/flights/test/supplier-responses.test.ts packages/flights/test/booking.test.ts packages/payments/test/payments.test.ts packages/fulfilment/test/fulfilment.test.ts",
     "test:db": "bash scripts/test-db.sh",
     "test": "npm run test:unit && npm run test:db"
   }

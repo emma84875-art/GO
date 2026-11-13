@@ -70,7 +70,7 @@ export interface HoldResult {
 export interface FlightSupplier {
   readonly name: string;
   readonly mode: SupplierMode;
-  readonly capabilities: { readonly holds: boolean };
+  readonly capabilities: { readonly holds: boolean; readonly orders?: boolean };
   search(request: SearchRequest): Promise<readonly Offer[]>;
   // Re-prices an offer just before it is held or paid for. Throws
   // SupplierUnavailableError("offer_expired") if the offer can no longer be sold.
@@ -88,7 +88,10 @@ export type SupplierFailureReason =
   | 'provider_error'
   | 'invalid_response'
   | 'fx_unavailable'
-  | 'offer_expired';
+  | 'offer_expired'
+  | 'price_changed'
+  | 'schedule_changed'
+  | 'order_not_found';
 
 export class SupplierUnavailableError extends Error {
   readonly reason: SupplierFailureReason;
@@ -98,4 +101,50 @@ export class SupplierUnavailableError extends Error {
     this.name = 'SupplierUnavailableError';
     this.reason = reason;
   }
+}
+
+// ---- Order and ticket operations (Phase 10) ----------------------------------------
+
+// A ticket document as the supplier reports it. The number is shown only to the customer
+// who owns the booking and to support staff, never in logs.
+export interface TicketDocument {
+  readonly type: 'electronic_ticket' | 'other';
+  readonly number: string;
+  readonly passengerIndex: number; // index into the order's passenger list
+}
+
+// Supplier's view of an order at one moment. Read, never inferred.
+export interface OrderSnapshot {
+  readonly orderId: string;
+  readonly bookingReference: string | null; // airline record locator
+  readonly awaitingPayment: boolean;
+  readonly paymentRequiredByUtc: string | null;
+  readonly documents: readonly TicketDocument[];
+  readonly cancelled: boolean;
+  readonly paidAmountMinor: number | null;
+  readonly currency: string;
+}
+
+export interface CreateOrderResult {
+  readonly orderId: string;
+  readonly snapshot: OrderSnapshot;
+}
+
+export interface CancellationOutcome {
+  readonly status: 'confirmed';
+  readonly refundAmountMinor: number | null; // null means the supplier has not said
+}
+
+// Optional: adapters implement only what the supplier documents. Each write takes an
+// idempotency key that the adapter must not send twice for the same logical operation.
+export interface FlightOrderOperations {
+  createOrder(
+    offer: Offer,
+    passengers: readonly HoldPassenger[],
+    idempotencyKey: string,
+    nowUtc: string,
+  ): Promise<CreateOrderResult>;
+  getOrder(orderId: string): Promise<OrderSnapshot>;
+  payOrder(orderId: string, amountMinor: number, currency: string, idempotencyKey: string): Promise<OrderSnapshot>;
+  cancelOrder(orderId: string, idempotencyKey: string): Promise<CancellationOutcome>;
 }
