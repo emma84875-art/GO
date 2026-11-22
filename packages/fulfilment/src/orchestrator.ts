@@ -17,6 +17,11 @@ import type { PaymentProvider } from '../../payments/src/provider.ts';
 import type { PaymentStore } from '../../payments/src/store.ts';
 import { captureAfterFulfilment, releaseAfterSupplierFailure, refund } from '../../payments/src/payment-flow.ts';
 import type { FulfilmentRecord, FulfilmentStore } from './store.ts';
+import { authorise, type Actor } from '../../auth/src/actor.ts';
+
+// Internal steps (release, refund on cancellation, capture) run as the fulfilment service. The
+// caller's own permission is checked once, at the public entry point, with authorise().
+const SERVICE: Actor = Object.freeze({ kind: 'system', service: 'fulfilment' } as const);
 import type { FulfilmentStatus } from './status.ts';
 
 export type OrderSupplier = FlightSupplier & Partial<FlightOrderOperations>;
@@ -52,11 +57,17 @@ export function snapshotDocuments(snapshot: OrderSnapshot): readonly TicketDocum
 }
 
 // Step 1 for an authorised booking: revalidate, create the supplier order, then pay the airline.
-export async function placeOrder(deps: FulfilmentDeps, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+  authorise(actor, 'fulfilment.order');
   const rec = requireRecord(deps, bookingId);
   if (rec.status !== "authorised") return rec;
   if (deps.supplier.mode === "production" && deps.productionEnabled !== true) {
     return deps.store.patch(bookingId, { blockedReason: "Production ticketing is disabled." });
+  }
+  // Passport collection is not enabled. An offer the supplier says needs identity documents is not
+  // ordered, so no passenger is sent to an airline without the data the airline requires.
+  if (rec.offer.identityDocumentRequirement === 'required') {
+    return deps.store.patch(bookingId, { blockedReason: 'This airline requires identity documents. Document collection is not enabled, so no order is placed.' });
   }
   const intent = deps.payStore.getIntent(rec.intentId);
   if (!intent || intent.status !== 'authorised') return rec;
@@ -151,7 +162,9 @@ async function payAndRead(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: s
     }
     deps.store.recordOperation({ key: payKey, state: 'sent', orderId });
     try {
-      snapshot = await deps.supplier.payOrder!(orderId, rec.totalMinor, rec.currency, payKey);
+      // The airline is paid its own price in its own currency (the supplier price), never the
+      // customer's total, which includes GO's service fee and is in the display currency.
+      snapshot = await deps.supplier.payOrder!(orderId, rec.offer.supplierPrice.amountMinor, rec.offer.supplierPrice.currency, payKey);
       deps.store.recordOperation({ key: payKey, state: 'done', orderId });
     } catch (error) {
       if (error instanceof SupplierUnavailableError && (error.reason === 'timeout' || error.reason === 'provider_error')) {
@@ -184,7 +197,8 @@ function finishFromSnapshot(deps: FulfilmentDeps, rec: FulfilmentRecord, snapsho
 }
 
 // Polls a booking whose tickets were not yet visible, or whose payment outcome was unknown.
-export async function pollTicketing(deps: FulfilmentDeps, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+export async function pollTicketing(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+  authorise(actor, 'fulfilment.poll');
   const rec = requireRecord(deps, bookingId);
   if (!['order_pending', 'ticketing_pending', 'ticketing_unknown', 'partially_fulfilled'].includes(rec.status) || !rec.orderId) return rec;
   if (rec.status === 'ticketing_unknown') {
@@ -197,10 +211,11 @@ export async function pollTicketing(deps: FulfilmentDeps, bookingId: string, now
 }
 
 // Capture only after confirmed fulfilment. Every condition is checked again by the payments module.
-export async function captureIfTicketed(deps: FulfilmentDeps, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+export async function captureIfTicketed(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+  authorise(actor, 'payment.capture');
   const rec = requireRecord(deps, bookingId);
   if (rec.status !== 'ticketed') return rec;
-  const result = await captureAfterFulfilment(deps.payStore, deps.payments, rec.intentId, 'confirmed', rec.totalMinor, rec.currency as 'NGN', nowUtc);
+  const result = await captureAfterFulfilment(deps.payStore, SERVICE, deps.payments, rec.intentId, 'confirmed', rec.totalMinor, rec.currency as 'NGN', nowUtc);
   if (result.status === 'captured') {
     return deps.store.transition(bookingId, 'confirmed', 'payment_captured_after_tickets', nowUtc);
   }
@@ -210,8 +225,13 @@ export async function captureIfTicketed(deps: FulfilmentDeps, bookingId: string,
 
 // Cancellation: cancel with the supplier, then refund the customer if money was captured,
 // or release the authorisation if it was not.
-export async function cancelBooking(deps: FulfilmentDeps, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+export async function cancelBooking(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+  authorise(actor, 'fulfilment.cancel');
   const rec = requireRecord(deps, bookingId);
+  // Owner gate, as for ticketing: no supplier cancellation in production until approved.
+  if (deps.supplier.mode === 'production' && deps.productionEnabled !== true) {
+    return deps.store.patch(bookingId, { blockedReason: 'Production cancellation is disabled.' });
+  }
   if (!['order_pending', 'ticketing_pending', 'partially_fulfilled', 'ticketed', 'confirmed'].includes(rec.status) || !rec.orderId) {
     throw new RangeError(`Cannot cancel a booking in ${rec.status}`);
   }
@@ -230,7 +250,7 @@ export async function cancelBooking(deps: FulfilmentDeps, bookingId: string, now
   const cancelled = deps.store.transition(bookingId, 'cancelled', 'supplier_cancelled', nowUtc);
   const intent = deps.payStore.getIntent(rec.intentId);
   if (intent?.status === 'captured' && intent.capturedMinor > 0) {
-    const r = await refund(deps.payStore, deps.payments, rec.intentId, intent.capturedMinor, nowUtc);
+    const r = await refund(deps.payStore, SERVICE, deps.payments, rec.intentId, intent.capturedMinor, nowUtc);
     if (r.status === 'refunded') return deps.store.transition(bookingId, 'refunded', 'refund_completed', nowUtc);
     return deps.store.transition(bookingId, 'refund_pending', 'refund_requested', nowUtc);
   }
@@ -252,7 +272,7 @@ async function cancelUnpaidOrder(deps: FulfilmentDeps, rec: FulfilmentRecord, no
 }
 
 async function release(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: string): Promise<void> {
-  await releaseAfterSupplierFailure(deps.payStore, deps.payments, rec.intentId, nowUtc);
+  await releaseAfterSupplierFailure(deps.payStore, SERVICE, deps.payments, rec.intentId, nowUtc);
 }
 
 function requireRecord(deps: FulfilmentDeps, bookingId: string): FulfilmentRecord {

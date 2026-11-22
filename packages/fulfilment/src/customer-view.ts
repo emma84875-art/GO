@@ -22,6 +22,8 @@ export function customerScreen(record: FulfilmentRecord): CustomerScreen {
     bookingReference: record.bookingReference,
     passengers: passengersFor('customer', record.passengers as readonly HoldPassenger[]),
     tickets: ticketsFor('customer', docs),
-    lockedMessage: record.lockedReason,
+    // Internal lock reasons describe supplier state and reconciliation steps. Customers see
+    // only a neutral line, never the internal text.
+    lockedMessage: record.lockedReason ? 'We are checking your booking with the airline. We will update you here.' : null,
   };
 }

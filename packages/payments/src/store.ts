@@ -42,6 +42,27 @@ export class PaymentStore {
     return true;
   }
 
+  // Synchronous claim for a payment start. Taken before any await, so a second concurrent start
+  // for the same booking is refused. A database implementation needs the same guarantee, enforced
+  // with a row lock or a unique partial index on live intents.
+  private readonly startsInFlight = new Set<string>();
+
+  claimPaymentStart(bookingId: string): boolean {
+    if (this.startsInFlight.has(bookingId)) return false;
+    this.startsInFlight.add(bookingId);
+    return true;
+  }
+
+  releasePaymentStart(bookingId: string): void {
+    this.startsInFlight.delete(bookingId);
+  }
+
+  // Releases a dedupe key when processing failed before any state change, so the provider's
+  // retry of the same event is applied rather than treated as a duplicate.
+  unmarkWebhookProcessed(key: string): void {
+    this.processedWebhooks.delete(key);
+  }
+
   append(entry: AuditEntry): void {
     this.auditLog.push(entry);
   }

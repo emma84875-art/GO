@@ -59,7 +59,7 @@ export class FlutterwavePaymentProvider implements PaymentProvider {
     };
   }
 
-  async initiate(request: InitiateRequest) {
+  async initiate(request: InitiateRequest): Promise<never> {
     throw new PaymentProviderError(
       'not_supported',
       `Flutterwave ${request.mode} is not confirmed for this merchant. Payment is not started. (${FLUTTERWAVE_API})`,

@@ -11,11 +11,18 @@ import type { PaymentStore } from './store.ts';
 import { liveIntentFor } from './intent.ts';
 import { captureDecision, type FulfilmentState, refundableMinor } from './money-safety.ts';
 import { moveIntent } from './transitions.ts';
+import { authorise, actorLabel, type Actor } from '../../auth/src/actor.ts';
+
+// Every money action writes who did it. The label never contains a token or an email address.
+function recordAction(store: PaymentStore, intentId: string, action: string, actor: Actor, nowUtc: string): void {
+  store.append({ at: nowUtc, intentId, event: 'action_authorised', from: null, to: null, detail: `${action} by ${actorLabel(actor)}` });
+}
 
 export const INTENT_WINDOW_MINUTES = 30;
 
 export interface PaymentBooking {
   readonly bookingId: string;
+  readonly ownerUserId?: string; // required for a customer actor; the owner is the only customer allowed to start
   readonly holdId: string;
   readonly holdExpiresAtUtc: string;
   readonly offer: Offer;
@@ -41,12 +48,36 @@ export type StartOutcome =
         | 'fare_expired'
         | 'fare_changed'
         | 'amount_mismatch'
-        | 'supplier_unavailable';
+        | 'supplier_unavailable'
+        | 'start_in_progress';
       readonly detail: string;
     };
 
 export async function startPayment(
   store: PaymentStore,
+  actor: Actor,
+  provider: PaymentProvider,
+  supplier: FlightSupplier,
+  booking: PaymentBooking,
+  gate: Gate,
+  nowUtc: string,
+): Promise<StartOutcome> {
+  authorise(actor, 'payment.start', booking.ownerUserId);
+  // Claim before the first await. A concurrent start for the same booking is refused, so the
+  // provider is never asked for two payment sessions for one booking (Phase 14 audit).
+  if (!store.claimPaymentStart(booking.bookingId)) {
+    return { status: 'blocked', reason: 'start_in_progress', detail: 'A payment for this booking is already being started.' };
+  }
+  try {
+    return await startPaymentClaimed(store, actor, provider, supplier, booking, gate, nowUtc);
+  } finally {
+    store.releasePaymentStart(booking.bookingId);
+  }
+}
+
+async function startPaymentClaimed(
+  store: PaymentStore,
+  actor: Actor,
   provider: PaymentProvider,
   supplier: FlightSupplier,
   booking: PaymentBooking,
@@ -110,7 +141,10 @@ export async function startPayment(
   const holdEnd = new Date(booking.holdExpiresAtUtc);
   const expiresAt = (windowEnd < holdEnd ? windowEnd : holdEnd).toISOString().replace('.000Z', 'Z');
 
-  const reference = `booking:${booking.bookingId}:payment_authorise:1`;
+  // One reference per attempt. A new attempt after a failed one gets a new key, so the provider
+  // cannot return the old session.
+  const attempt = store.allIntents().filter((i) => i.bookingId === booking.bookingId).length + 1;
+  const reference = `booking:${booking.bookingId}:payment_authorise:${attempt}`;
   const amount = money(booking.totalMinor, booking.currency);
   const result = await provider.initiate({
     reference,
@@ -135,6 +169,7 @@ export async function startPayment(
   };
   store.saveIntent(intent);
   store.append({ at: nowUtc, intentId: intent.id, event: 'initiated', from: null, to: 'initiated', detail: `booking ${booking.bookingId}` });
+  recordAction(store, intent.id, 'payment.start', actor, nowUtc);
   return { status: 'initiated', intentId: intent.id, redirectUrl: result.redirectUrl };
 }
 
@@ -146,6 +181,7 @@ export type CaptureOutcome =
 // Capture is attempted only when fulfilment is confirmed and every money-safety condition holds.
 export async function captureAfterFulfilment(
   store: PaymentStore,
+  actor: Actor,
   provider: PaymentProvider,
   intentId: string,
   fulfilment: FulfilmentState,
@@ -153,6 +189,8 @@ export async function captureAfterFulfilment(
   bookingCurrency: 'NGN' | 'USD' | 'GBP' | 'EUR',
   nowUtc: string,
 ): Promise<CaptureOutcome> {
+  authorise(actor, 'payment.capture');
+  recordAction(store, intentId, 'payment.capture', actor, nowUtc);
   const intent = store.getIntent(intentId);
   if (!intent) return { status: 'blocked', reasons: ['Unknown intent.'] };
 
@@ -187,10 +225,13 @@ export async function captureAfterFulfilment(
 // Supplier booking failed after authorisation: release the hold so the customer is not charged.
 export async function releaseAfterSupplierFailure(
   store: PaymentStore,
+  actor: Actor,
   provider: PaymentProvider,
   intentId: string,
   nowUtc: string,
 ): Promise<{ status: 'released' | 'review_required'; intentId: string; reason?: string }> {
+  authorise(actor, 'payment.release');
+  recordAction(store, intentId, 'payment.release', actor, nowUtc);
   const intent = store.getIntent(intentId);
   if (!intent || intent.status !== 'authorised' || !intent.providerRef) {
     return { status: 'review_required', intentId, reason: 'intent is not in authorised state' };
@@ -220,11 +261,14 @@ export type RefundOutcome =
 
 export async function refund(
   store: PaymentStore,
+  actor: Actor,
   provider: PaymentProvider,
   intentId: string,
   amountMinor: number,
   nowUtc: string,
 ): Promise<RefundOutcome> {
+  authorise(actor, 'payment.refund');
+  recordAction(store, intentId, 'payment.refund', actor, nowUtc);
   const intent = store.getIntent(intentId);
   if (!intent) return { status: 'blocked', reason: 'Unknown intent.' };
   if (intent.status !== 'captured') return { status: 'blocked', reason: `Only captured payments can be refunded; this is ${intent.status}.` };

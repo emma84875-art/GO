@@ -49,7 +49,15 @@ export async function processWebhook(
   // A repeat of an event we already processed is a no-op, not a second state change.
   if (!store.markWebhookProcessed(dedupeKey)) return { status: 'duplicate' };
 
-  const truth = await provider.getStatus(parsed.providerRef);
+  // If the status lookup fails, no state changed. Release the dedupe key and rethrow, so the
+  // provider's retry is processed rather than silently dropped as a duplicate.
+  let truth;
+  try {
+    truth = await provider.getStatus(parsed.providerRef);
+  } catch (error) {
+    store.unmarkWebhookProcessed(dedupeKey);
+    throw error;
+  }
 
   if (truth.amount.amountMinor !== intent.amount.amountMinor || truth.amount.currency !== intent.amount.currency) {
     const updated = moveIntent(store, intent, 'review_required', 'amount_mismatch', nowUtc,

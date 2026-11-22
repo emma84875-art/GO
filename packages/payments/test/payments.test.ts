@@ -5,14 +5,20 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FixturePaymentProvider, FIXTURE_WEBHOOK_HEADER } from '../src/adapters/fixture.ts';
-import { PaystackPaymentProvider, PAYSTACK_SIGNATURE_HEADER } from '../src/adapters/paystack.ts';
+import { PaystackPaymentProvider, PAYSTACK_SIGNATURE_HEADER, requirePaystackRedirect } from '../src/adapters/paystack.ts';
 import { FlutterwavePaymentProvider, FLUTTERWAVE_HASH_HEADER } from '../src/adapters/flutterwave.ts';
 import { PaymentStore } from '../src/store.ts';
 import { startPayment, captureAfterFulfilment, releaseAfterSupplierFailure, refund, expireStaleIntents, type PaymentBooking } from '../src/payment-flow.ts';
 import { processWebhook } from '../src/webhook.ts';
+import type { InitiateRequest } from '../src/provider.ts';
 import { reconcile } from '../src/reconcile.ts';
 import { canTransition, transition } from '../src/state.ts';
 import { MockFlightSupplier } from '../../flights/src/adapters/mock.ts';
+import type { Actor } from '../../auth/src/actor.ts';
+
+// Test identities. Services act through the payments and fulfilment paths; users are tested separately.
+const PAY: Actor = { kind: 'system', service: 'payments' };
+const FUL: Actor = { kind: 'system', service: 'fulfilment' };
 import { SupplierUnavailableError, type FlightSupplier, type Offer } from '../../flights/src/supplier.ts';
 import { createHmac } from 'node:crypto';
 
@@ -51,7 +57,7 @@ async function started(overrides: Partial<PaymentBooking> = {}, supplier: Flight
   const store = new PaymentStore();
   const provider = new FixturePaymentProvider(SECRET);
   const booking = await bookingFor(overrides);
-  const outcome = await startPayment(store, provider, supplier, booking, { productionEnabled: false }, NOW);
+  const outcome = await startPayment(store, PAY, provider, supplier, booking, { productionEnabled: false }, NOW);
   assert.equal(outcome.status, 'initiated', JSON.stringify(outcome));
   const intent = store.getIntent(outcome.intentId);
   assert.ok(intent);
@@ -78,13 +84,13 @@ describe('successful payment (fixture)', () => {
     const applied = await processWebhook(store, provider, hook.raw, hook.headers, NOW);
     assert.deepEqual(applied, { status: 'applied', intentId: intent.id, to: 'authorised' });
 
-    const captured = await captureAfterFulfilment(store, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    const captured = await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
     assert.equal(captured.status, 'captured');
     assert.equal(store.getIntent(intent.id)?.capturedMinor, intent.amount.amountMinor);
 
-    const partial = await refund(store, provider, intent.id, 1000, NOW);
+    const partial = await refund(store, FUL, provider, intent.id, 1000, NOW);
     assert.equal(partial.status, 'partially_refunded');
-    const rest = await refund(store, provider, intent.id, intent.amount.amountMinor - 1000, NOW);
+    const rest = await refund(store, FUL, provider, intent.id, intent.amount.amountMinor - 1000, NOW);
     assert.equal(rest.status, 'refunded');
     assert.equal(store.getIntent(intent.id)?.status, 'refunded');
   });
@@ -98,7 +104,7 @@ describe('failed payment (fixture)', () => {
     const out = await processWebhook(store, provider, hook.raw, hook.headers, NOW);
     assert.equal(out.status, 'applied');
     assert.equal(store.getIntent(intent.id)?.status, 'failed');
-    const capture = await captureAfterFulfilment(store, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    const capture = await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
     assert.equal(capture.status, 'blocked');
   });
 });
@@ -113,6 +119,20 @@ describe('webhook safety', () => {
     assert.equal(first.status, 'applied');
     assert.equal(second.status, 'duplicate');
     assert.equal(store.audit().filter((e) => e.event === 'provider_authorised').length, 1);
+  });
+
+  test('a failed status lookup does not swallow the webhook: the provider retry is applied', async () => {
+    const { store, provider, intent } = await started();
+    provider.setState(intent.providerRef!, 'authorised', intent.amount);
+    const hook = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    const flaky = Object.assign(Object.create(provider), {
+      getStatus: async () => { throw new Error('network down'); },
+    });
+    await assert.rejects(processWebhook(store, flaky, hook.raw, hook.headers, NOW));
+    assert.equal(store.getIntent(intent.id)?.status, 'initiated');
+    const retried = await processWebhook(store, provider, hook.raw, hook.headers, NOW);
+    assert.equal(retried.status, 'applied');
+    assert.equal(store.getIntent(intent.id)?.status, 'authorised');
   });
 
   test('a forged or altered body is rejected and recorded', async () => {
@@ -178,7 +198,7 @@ describe('amount mismatches', () => {
   test('capture refuses when the booking total differs from the intent', async () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
-    const out = await captureAfterFulfilment(store, provider, intent.id, 'confirmed', intent.amount.amountMinor + 1, 'NGN', NOW);
+    const out = await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor + 1, 'NGN', NOW);
     assert.equal(out.status, 'blocked');
     assert.match(out.status === 'blocked' ? out.reasons.join(' ') : '', /does not match/);
   });
@@ -196,7 +216,7 @@ describe('money safety: capture only after confirmed fulfilment (Option A)', () 
   for (const fulfilment of ['pending', 'failed', 'unknown'] as const) {
     test(`does not capture while supplier fulfilment is ${fulfilment}`, async () => {
       const { store, provider, intent } = await authorised();
-      const out = await captureAfterFulfilment(store, provider, intent.id, fulfilment, intent.amount.amountMinor, 'NGN', NOW);
+      const out = await captureAfterFulfilment(store, FUL, provider, intent.id, fulfilment, intent.amount.amountMinor, 'NGN', NOW);
       assert.equal(out.status, 'blocked');
       assert.equal(store.getIntent(intent.id)?.status, 'authorised');
     });
@@ -204,9 +224,9 @@ describe('money safety: capture only after confirmed fulfilment (Option A)', () 
 
   test('supplier booking failure releases the authorisation instead of capturing', async () => {
     const { store, provider, intent } = await authorised();
-    const blocked = await captureAfterFulfilment(store, provider, intent.id, 'failed', intent.amount.amountMinor, 'NGN', NOW);
+    const blocked = await captureAfterFulfilment(store, FUL, provider, intent.id, 'failed', intent.amount.amountMinor, 'NGN', NOW);
     assert.equal(blocked.status, 'blocked');
-    const released = await releaseAfterSupplierFailure(store, provider, intent.id, NOW);
+    const released = await releaseAfterSupplierFailure(store, FUL, provider, intent.id, NOW);
     assert.equal(released.status, 'released');
     assert.equal(store.getIntent(intent.id)?.status, 'released');
     assert.equal(store.getIntent(intent.id)?.capturedMinor, 0);
@@ -215,7 +235,7 @@ describe('money safety: capture only after confirmed fulfilment (Option A)', () 
   test('a provider that cannot release sends the intent to review, never to captured', async () => {
     const { store, provider, intent } = await authorised();
     const noRelease = Object.assign(Object.create(Object.getPrototypeOf(provider)), provider, { release: undefined });
-    const out = await releaseAfterSupplierFailure(store, noRelease, intent.id, NOW);
+    const out = await releaseAfterSupplierFailure(store, FUL, noRelease, intent.id, NOW);
     assert.equal(out.status, 'review_required');
   });
 });
@@ -224,15 +244,15 @@ describe('refunds', () => {
   test('refuses to refund more than was captured, or a payment never captured', async () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
-    assert.equal((await refund(store, provider, intent.id, 1, NOW)).status, 'blocked');
+    assert.equal((await refund(store, FUL, provider, intent.id, 1, NOW)).status, 'blocked');
   });
 
   test('refuses a refund larger than the remaining refundable amount', async () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
     await processWebhook(store, provider, ...(() => { const h = signedWebhook(provider, { event: 'a', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' }); return [h.raw, h.headers, NOW] as const; })());
-    await captureAfterFulfilment(store, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
-    const out = await refund(store, provider, intent.id, intent.amount.amountMinor + 1, NOW);
+    await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    const out = await refund(store, FUL, provider, intent.id, intent.amount.amountMinor + 1, NOW);
     assert.equal(out.status, 'blocked');
   });
 
@@ -240,9 +260,9 @@ describe('refunds', () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
     await processWebhook(store, provider, ...(() => { const h = signedWebhook(provider, { event: 'a', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' }); return [h.raw, h.headers, NOW] as const; })());
-    await captureAfterFulfilment(store, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
     const broken = Object.assign(Object.create(Object.getPrototypeOf(provider)), provider, { refund: async () => { throw new Error('network'); } });
-    const out = await refund(store, broken, intent.id, 100, NOW);
+    const out = await refund(store, FUL, broken, intent.id, 100, NOW);
     assert.equal(out.status, 'review_required');
   });
 });
@@ -250,7 +270,7 @@ describe('refunds', () => {
 describe('booking link: start payment only for a valid booking', () => {
   test('a second attempt for the same booking returns the existing intent and charges nothing new', async () => {
     const { store, provider, booking, intent } = await started();
-    const again = await startPayment(store, provider, new MockFlightSupplier(), booking, { productionEnabled: false }, NOW);
+    const again = await startPayment(store, PAY, provider, new MockFlightSupplier(), booking, { productionEnabled: false }, NOW);
     assert.deepEqual(again, { status: 'duplicate_attempt', intentId: intent.id });
     assert.equal(store.allIntents().length, 1);
   });
@@ -259,21 +279,21 @@ describe('booking link: start payment only for a valid booking', () => {
     const store = new PaymentStore();
     const prod = new FixturePaymentProvider(SECRET);
     Object.defineProperty(prod, 'mode', { value: 'production' });
-    const out = await startPayment(store, prod, new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
+    const out = await startPayment(store, PAY, prod, new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
     assert.equal(out.status === 'blocked' && out.reason, 'production_disabled');
   });
 
   test('a missing or expired hold blocks payment', async () => {
     const store = new PaymentStore();
     const provider = new FixturePaymentProvider(SECRET);
-    const none = await startPayment(store, provider, new MockFlightSupplier(), await bookingFor({ holdId: '' }), { productionEnabled: false }, NOW);
+    const none = await startPayment(store, PAY, provider, new MockFlightSupplier(), await bookingFor({ holdId: '' }), { productionEnabled: false }, NOW);
     assert.equal(none.status === 'blocked' && none.reason, 'hold_missing');
-    const expired = await startPayment(store, provider, new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, '2026-11-12T11:00:00Z');
+    const expired = await startPayment(store, PAY, provider, new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, '2026-11-12T11:00:00Z');
     assert.equal(expired.status === 'blocked' && expired.reason, 'hold_expired');
   });
 
   test('an expired fare is revalidated and blocks payment', async () => {
-    const out = await startPayment(new PaymentStore(), new FixturePaymentProvider(SECRET), new MockFlightSupplier(),
+    const out = await startPayment(new PaymentStore(), PAY, new FixturePaymentProvider(SECRET), new MockFlightSupplier(),
       await bookingFor({ holdExpiresAtUtc: '2027-01-02T00:00:00Z' }), { productionEnabled: false }, '2027-01-01T00:00:00Z');
     assert.equal(out.status === 'blocked' && out.reason, 'fare_expired');
   });
@@ -281,27 +301,27 @@ describe('booking link: start payment only for a valid booking', () => {
   test('a fare that changed blocks payment until the customer accepts', async () => {
     const offer = await fixtureOffer();
     const supplier = { ...new MockFlightSupplier(), name: 'mock', mode: 'mock' as const, capabilities: { holds: true }, search: async () => [], priceOffer: async (o: Offer) => ({ ...o, supplierPrice: { amountMinor: o.supplierPrice.amountMinor + 500, currency: 'USD' as const } }) };
-    const out = await startPayment(new PaymentStore(), new FixturePaymentProvider(SECRET), supplier as unknown as FlightSupplier,
+    const out = await startPayment(new PaymentStore(), PAY, new FixturePaymentProvider(SECRET), supplier as unknown as FlightSupplier,
       await bookingFor({ offer }), { productionEnabled: false }, NOW);
     assert.equal(out.status === 'blocked' && out.reason, 'fare_changed');
   });
 
   test('an amount that differs from the accepted summary is refused', async () => {
-    const out = await startPayment(new PaymentStore(), new FixturePaymentProvider(SECRET), new MockFlightSupplier(),
+    const out = await startPayment(new PaymentStore(), PAY, new FixturePaymentProvider(SECRET), new MockFlightSupplier(),
       await bookingFor({ totalMinor: 1 }), { productionEnabled: false }, NOW);
     assert.equal(out.status === 'blocked' && out.reason, 'amount_mismatch');
   });
 
   test("a supplier that cannot revalidate fares blocks payment", async () => {
     const noRevalidate = { ...new MockFlightSupplier(), priceOffer: undefined };
-    const out = await startPayment(new PaymentStore(), new FixturePaymentProvider(SECRET), noRevalidate as unknown as FlightSupplier,
+    const out = await startPayment(new PaymentStore(), PAY, new FixturePaymentProvider(SECRET), noRevalidate as unknown as FlightSupplier,
       await bookingFor(), { productionEnabled: false }, NOW);
     assert.equal(out.status === "blocked" && out.reason, "supplier_unavailable");
   });
 
   test('a supplier that is down blocks payment with its reason', async () => {
     const down = { ...new MockFlightSupplier(), priceOffer: async () => { throw new SupplierUnavailableError('timeout', 'slow'); } };
-    const out = await startPayment(new PaymentStore(), new FixturePaymentProvider(SECRET), down as unknown as FlightSupplier,
+    const out = await startPayment(new PaymentStore(), PAY, new FixturePaymentProvider(SECRET), down as unknown as FlightSupplier,
       await bookingFor(), { productionEnabled: false }, NOW);
     assert.equal(out.status === 'blocked' && out.reason, 'supplier_unavailable');
   });
@@ -309,13 +329,13 @@ describe('booking link: start payment only for a valid booking', () => {
 
 describe('real providers never start payments without confirmed authorisation', () => {
   test('Paystack NGN authorisation is refused', async () => {
-    const out = await startPayment(new PaymentStore(), new PaystackPaymentProvider({ mode: 'sandbox', secretKey: 'sk_test_x' }),
+    const out = await startPayment(new PaymentStore(), PAY, new PaystackPaymentProvider({ mode: 'sandbox', secretKey: 'sk_test_x' }),
       new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
     assert.equal(out.status === 'blocked' && out.reason, 'authorisation_not_confirmed');
   });
 
   test('Flutterwave authorisation is refused until confirmed', async () => {
-    const out = await startPayment(new PaymentStore(), new FlutterwavePaymentProvider({ mode: 'sandbox', secretHash: 'h' }),
+    const out = await startPayment(new PaymentStore(), PAY, new FlutterwavePaymentProvider({ mode: 'sandbox', secretHash: 'h' }),
       new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
     assert.equal(out.status === 'blocked' && out.reason, 'authorisation_not_confirmed');
   });
@@ -395,8 +415,88 @@ describe('audit log', () => {
     const hook = signedWebhook(provider, { event: 'failed', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'failed' });
     await processWebhook(store, provider, hook.raw, hook.headers, NOW);
     const log = store.audit();
-    assert.deepEqual(log.map((e) => e.event), ['initiated', 'provider_failed']);
+    assert.deepEqual(log.map((e) => e.event), ['initiated', 'action_authorised', 'provider_failed']);
     (log as unknown as { push: (e: unknown) => void }).push({ bogus: true });
-    assert.equal(store.audit().length, 2);
+    assert.equal(store.audit().length, 3);
+  });
+});
+
+describe('Paystack redirect address (customer is sent here)', () => {
+  test('accepts an HTTPS address on a Paystack domain', () => {
+    assert.equal(requirePaystackRedirect('https://checkout.paystack.com/abc123'), 'https://checkout.paystack.com/abc123');
+  });
+
+  test('refuses plain HTTP, other hosts, lookalike hosts and embedded credentials', () => {
+    assert.throws(() => requirePaystackRedirect('http://checkout.paystack.com/abc'), /not an allowed/);
+    assert.throws(() => requirePaystackRedirect('https://evil.example.com/abc'), /not an allowed/);
+    assert.throws(() => requirePaystackRedirect('https://paystack.com.evil.example.com/abc'), /not an allowed/);
+    assert.throws(() => requirePaystackRedirect('https://user:pass@checkout.paystack.com/abc'), /not an allowed/);
+    assert.throws(() => requirePaystackRedirect('javascript:alert(1)'), /not an allowed|not a valid URL/);
+  });
+});
+
+describe('concurrent payment starts (regression)', () => {
+  test('two concurrent starts for one booking create one provider session, never two', async () => {
+    const supplier = new MockFlightSupplier();
+    const [offer] = await supplier.search({ origin: 'LOS', destination: 'LHR', departureDate: '2026-12-01', passengers: 1, cabin: 'economy', displayCurrency: 'NGN' });
+    const store = new PaymentStore();
+    const provider = new FixturePaymentProvider('secret');
+    let initiations = 0;
+    const counted = Object.assign(Object.create(provider), {
+      initiate: async (req: InitiateRequest) => { initiations += 1; return provider.initiate(req); },
+    });
+    const booking = { bookingId: 'b-race', holdId: 'h', holdExpiresAtUtc: '2026-11-19T12:00:00Z', offer, totalMinor: offer.displayPrice.amountMinor, currency: 'NGN' as const, customerEmail: 'a@example.com' };
+    const [a, b] = await Promise.all([
+      startPayment(store, PAY, counted, supplier, booking, { productionEnabled: false }, NOW),
+      startPayment(store, PAY, counted, supplier, booking, { productionEnabled: false }, NOW),
+    ]);
+    assert.equal(initiations, 1);
+    assert.deepEqual([a.status, b.status].sort(), ['blocked', 'initiated']);
+    assert.equal(store.allIntents().length, 1);
+  });
+});
+
+describe('money paths enforce actors (regression)', () => {
+  test('a customer can start a payment only on their own booking; another customer is refused and nothing is created', async () => {
+    const supplier = new MockFlightSupplier();
+    const [offer] = await supplier.search({ origin: 'LOS', destination: 'LHR', departureDate: '2026-12-01', passengers: 1, cabin: 'economy', displayCurrency: 'NGN' });
+    const provider = new FixturePaymentProvider('secret');
+    const store = new PaymentStore();
+    const booking = { bookingId: 'b-own', ownerUserId: 'cust-alice', holdId: 'h', holdExpiresAtUtc: '2026-11-19T12:00:00Z', offer, totalMinor: offer.displayPrice.amountMinor, currency: 'NGN' as const, customerEmail: 'a@example.com' };
+    const alice: Actor = { kind: 'user', userId: 'cust-alice', role: 'customer', mfa: false };
+    const bob: Actor = { kind: 'user', userId: 'cust-bob', role: 'customer', mfa: false };
+    await assert.rejects(startPayment(store, bob, provider, supplier, booking, { productionEnabled: false }, NOW), /only the booking owner/);
+    assert.equal(store.allIntents().length, 0);
+    const out = await startPayment(store, alice, provider, supplier, booking, { productionEnabled: false }, NOW);
+    assert.equal(out.status, 'initiated');
+  });
+
+  test('a support agent cannot refund a captured payment, even with MFA', async () => {
+    const { store, provider, intent } = await started();
+    provider.setState(intent.providerRef!, 'authorised', intent.amount);
+    const hook = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    await processWebhook(store, provider, hook.raw, hook.headers, NOW);
+    const support: Actor = { kind: 'user', userId: 'staff-1', role: 'support', mfa: true };
+    await assert.rejects(refund(store, support, provider, intent.id, 1, NOW), /not permitted/);
+    assert.equal(store.getIntent(intent.id)?.refundedMinor, 0);
+  });
+});
+
+describe('payment attempts are distinct (regression)', () => {
+  test('a retry after a failed attempt gets a new reference, so the provider does not reuse the old session key', async () => {
+    const supplier = new MockFlightSupplier();
+    const [offer] = await supplier.search({ origin: 'LOS', destination: 'LHR', departureDate: '2026-12-01', passengers: 1, cabin: 'economy', displayCurrency: 'NGN' });
+    const provider = new FixturePaymentProvider('secret');
+    const store = new PaymentStore();
+    const booking = { bookingId: 'b-retry', holdId: 'h', holdExpiresAtUtc: '2026-11-19T12:00:00Z', offer, totalMinor: offer.displayPrice.amountMinor, currency: 'NGN' as const, customerEmail: 'a@example.com' };
+    const first = await startPayment(store, PAY, provider, supplier, booking, { productionEnabled: false }, NOW);
+    assert.equal(first.status, 'initiated');
+    const firstIntent = store.getIntent((first as { intentId: string }).intentId)!;
+    store.saveIntent({ ...firstIntent, status: 'failed' });
+    const second = await startPayment(store, PAY, provider, supplier, booking, { productionEnabled: false }, NOW);
+    assert.equal(second.status, 'initiated');
+    const secondIntent = store.getIntent((second as { intentId: string }).intentId)!;
+    assert.notEqual(secondIntent.reference, firstIntent.reference);
+    assert.notEqual(secondIntent.id, firstIntent.id);
   });
 });

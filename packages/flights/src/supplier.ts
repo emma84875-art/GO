@@ -46,6 +46,9 @@ export interface Offer {
   readonly segments: readonly Segment[]; // outbound journey
   readonly returnSegments?: readonly Segment[]; // return journey, round trips only
   readonly fare?: FareDetails;
+  // What the supplier says about identity documents for this offer. Absent means unknown, and
+  // unknown never triggers document collection. Only a supplier statement sets 'required' or 'optional'.
+  readonly identityDocumentRequirement?: 'required' | 'optional' | 'not_required';
 }
 
 export type SupplierMode = 'mock' | 'sandbox' | 'production';

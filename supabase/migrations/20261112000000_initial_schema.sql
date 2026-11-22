@@ -157,11 +157,15 @@ create index passengers_booking_id_idx on public.passengers (booking_id);
 create table public.payments (
   id                   uuid primary key default gen_random_uuid(),
   booking_id           uuid not null references public.bookings (id) on delete restrict,
-  provider             text not null check (provider in ('mock', 'paystack', 'flutterwave', 'stripe', 'crypto')),
+  -- Values match packages/payments (adapter names). 'stripe' and 'crypto' are not built or approved.
+  provider             text not null check (provider in ('fixture', 'paystack', 'flutterwave')),
   provider_reference   text not null,
   amount_minor         bigint not null check (amount_minor >= 0),
   currency             char(3) not null check (currency in ('NGN', 'USD', 'GBP', 'EUR')),
-  status               text not null check (status in ('initiated', 'succeeded', 'failed', 'refunded')),
+  -- Values match packages/payments/src/state.ts exactly. The code cannot persist any other state.
+  status               text not null check (status in (
+    'initiated', 'authorised', 'captured', 'failed', 'expired', 'released',
+    'refund_pending', 'refunded', 'review_required')),
   -- Webhook event IDs already processed, for idempotency.
   processed_event_ids  text[] not null default '{}',
   created_at           timestamptz not null default now(),
@@ -265,3 +269,11 @@ revoke insert, update, delete on public.audit_log from authenticated;
 revoke update, delete on public.bookings from authenticated;
 revoke insert, update, delete on public.booking_segments, public.passengers,
   public.payments, public.tickets from authenticated;
+
+-- Phase 14 hardening. Tables created later must not inherit anon access by default, and the
+-- audit log cannot be emptied with TRUNCATE (a statement-level trigger blocks it for every role).
+alter default privileges in schema public revoke all on tables from anon;
+revoke truncate on public.audit_log from authenticated;
+create trigger audit_log_no_truncate
+  before truncate on public.audit_log
+  for each statement execute function public.prevent_audit_mutation();

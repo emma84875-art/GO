@@ -35,6 +35,24 @@ const CAPABILITIES: ProviderCapabilities = {
   },
 };
 
+// The customer is sent to this address, so it must be HTTPS, carry no credentials and sit on a
+// Paystack domain. The Paystack checkout hostname is not verified in this session; sandbox must confirm it.
+const PAYSTACK_HOSTS = ['paystack.com', 'paystack.co'];
+
+export function requirePaystackRedirect(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new PaymentProviderError('invalid_response', 'Paystack redirect is not a valid URL');
+  }
+  const onPaystack = PAYSTACK_HOSTS.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`));
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || !onPaystack) {
+    throw new PaymentProviderError('invalid_response', 'Paystack redirect is not an allowed HTTPS address');
+  }
+  return parsed.toString();
+}
+
 export class PaystackPaymentProvider implements PaymentProvider {
   readonly name = 'paystack';
   readonly mode: 'sandbox' | 'production';
@@ -84,7 +102,7 @@ export class PaystackPaymentProvider implements PaymentProvider {
     if (response.status >= 400) throw new PaymentProviderError('provider_error', `Paystack returned HTTP ${response.status}`);
     const body = (await response.json()) as { data?: { reference?: string; authorization_url?: string } };
     if (!body.data?.reference || !body.data.authorization_url) throw new PaymentProviderError('invalid_response', 'Paystack initialise response is incomplete');
-    return { providerRef: body.data.reference, redirectUrl: body.data.authorization_url };
+    return { providerRef: body.data.reference, redirectUrl: requirePaystackRedirect(body.data.authorization_url) };
   }
 
   async getStatus(providerRef: string): Promise<ProviderStatus> {
