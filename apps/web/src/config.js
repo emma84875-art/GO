@@ -4,6 +4,6 @@
 // Fill these in from the Supabase dashboard (Project Settings, API). Until then the app shows a notice
 // and the sign-in and sign-up forms do nothing.
 export default {
-  SUPABASE_URL: '',
-  SUPABASE_PUBLISHABLE_KEY: '',
+  SUPABASE_URL: 'https://gghsvzighgqqamibjywu.supabase.co',
+  SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_n0jNAMww8t8H52CVVAHaGg_Bn0xMuCZ',
 };
