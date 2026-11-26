@@ -45,7 +45,7 @@ describe('local time helpers', () => {
 
 describe('offer filters', () => {
   test('filters by maximum price', () => {
-    assert.deepEqual(applyOfferFilters([direct, cheapOneStop], { maxPriceMinor: 50000 * 1500 }).map((o) => o.id), ['one-stop']);
+    assert.deepEqual(applyOfferFilters([direct, cheapOneStop], { maxPriceMinor: 50000 * 1500, maxPriceCurrency: 'NGN' }).map((o) => o.id), ['one-stop']);
   });
 
   test('filters by airline on the outbound carrier', () => {

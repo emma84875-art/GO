@@ -6,6 +6,8 @@
 // on orange fails contrast (3.15:1). Emails are always light, with explicit colours, so they do
 // not depend on the device's dark mode.
 
+import { formatMoney as formatCoreMoney, historicalMoney, isKnownCurrencyCode } from '../../core/src/money.ts';
+
 export const BRAND = Object.freeze({
   purple: '#512584',
   orange: '#FF5738',
@@ -65,14 +67,12 @@ export function safeSubject(value: string): string {
   return safeText(value, SUBJECT_MAX);
 }
 
-// Money in minor units (for example kobo). Two decimal places are assumed for NGN, GBP and USD.
-// Integer arithmetic only: no floats.
+// Money in minor units (for example kobo). The decimal places come from the currency's ISO exponent
+// (core), so JPY has none and KWD has three. Integer arithmetic and string formatting only: no floats.
 export function formatMoney(amountMinor: number, currency: string): string {
   if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new RenderError('invalid_amount');
-  if (!/^[A-Z]{3}$/.test(currency)) throw new RenderError('invalid_currency');
-  const whole = Math.floor(amountMinor / 100);
-  const fraction = String(amountMinor % 100).padStart(2, '0');
-  return `${currency} ${whole.toLocaleString('en-US')}.${fraction}`;
+  if (!isKnownCurrencyCode(currency)) throw new RenderError('invalid_currency');
+  return formatCoreMoney(historicalMoney(amountMinor, currency));
 }
 
 // Local time for a segment, formatted in its own time zone. Throws on an unknown zone.

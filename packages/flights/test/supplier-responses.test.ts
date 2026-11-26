@@ -9,6 +9,7 @@ import {
   DuffelFlightSupplier,
   buildDuffelOfferRequest,
   normaliseDuffelOffers,
+  normaliseDuffelResult,
   parseDecimalToMinor,
   type HttpResponse,
 } from '../src/adapters/duffel.ts';
@@ -117,32 +118,38 @@ describe('Duffel response normalisation (synthetic fixture)', () => {
     assert.equal(offer.fare?.cabinBags, null);
   });
 
-  test('converts to a display currency only with a supplied FX snapshot', () => {
+  test('converts to a display currency only with a fresh FX snapshot for that pair', () => {
     const snapshot: FxRateSnapshot = { from: 'USD', to: 'NGN', rateScaled: 1500_00000000n, capturedAtUtc: '2026-11-12T05:00:00Z' };
-    const [offer] = normaliseDuffelOffers(synthetic, 'NGN', (from, to) => (from === 'USD' && to === 'NGN' ? snapshot : undefined));
+    const [offer] = normaliseDuffelOffers(synthetic, 'NGN', (from, to) => (from === 'USD' && to === 'NGN' ? snapshot : undefined), { nowMs: Date.parse('2026-11-12T06:00:00Z') });
     assert.equal(offer.displayPrice.currency, 'NGN');
     assert.equal(offer.displayPrice.amountMinor, 125050 * 1500);
+    assert.equal(offer.supplierPrice.currency, 'USD', 'the supplier amount is kept as supplied');
   });
 
-  test('refuses to show a display price when no FX snapshot exists', () => {
-    assert.throws(() => normaliseDuffelOffers(synthetic, 'NGN'), (error: unknown) =>
-      error instanceof SupplierUnavailableError && error.reason === 'fx_unavailable');
+  test('without a snapshot the offer keeps its supplier currency and is not rejected', () => {
+    const [offer] = normaliseDuffelOffers(synthetic, 'NGN');
+    assert.equal(offer.displayPrice.currency, 'USD');
+    assert.equal(offer.displayPrice.amountMinor, 125050);
   });
 
   test('rejects payloads without an offers array', () => {
     assert.throws(() => normaliseDuffelOffers({}, 'USD'), (e: unknown) => e instanceof SupplierUnavailableError && e.reason === 'invalid_response');
   });
 
-  test('rejects an offer missing its price', () => {
+  test('an offer missing its price is excluded and counted, not shown', () => {
     const broken = structuredClone(synthetic) as { data: { offers: Record<string, unknown>[] } };
     delete broken.data.offers[0].total_amount;
-    assert.throws(() => normaliseDuffelOffers(broken, 'USD'), (e: unknown) => e instanceof SupplierUnavailableError && e.reason === 'invalid_response');
+    const result = normaliseDuffelResult(broken, 'USD');
+    assert.equal(result.offers.length, 0);
+    assert.equal(result.excluded.invalidPrice, 1);
   });
 
-  test('rejects an unsupported settlement currency', () => {
+  test('an unsupported settlement currency is excluded and its code reported', () => {
     const broken = structuredClone(synthetic) as { data: { offers: Record<string, unknown>[] } };
-    broken.data.offers[0].total_currency = 'JPY';
-    assert.throws(() => normaliseDuffelOffers(broken, 'USD'), (e: unknown) => e instanceof SupplierUnavailableError && e.reason === 'invalid_response');
+    broken.data.offers[0].total_currency = 'UYW';
+    const result = normaliseDuffelResult(broken, 'USD');
+    assert.equal(result.offers.length, 0);
+    assert.deepEqual(result.excluded, { invalidCurrency: 1, currencies: ['UYW'], invalidPrice: 0, malformed: 0 });
   });
 });
 
@@ -165,7 +172,7 @@ describe('Duffel adapter gating and failures', () => {
     const seen: { url: string; headers?: Record<string, string> }[] = [];
     const supplier = new DuffelFlightSupplier({
       mode: 'sandbox',
-      accessToken: 'test-token',
+      accessToken: 'duffel_test_fixture',
       transport: async (url, init) => {
         seen.push({ url, headers: (init as { headers: Record<string, string> }).headers });
         return ok(synthetic);
@@ -174,22 +181,22 @@ describe('Duffel adapter gating and failures', () => {
     const offers = await supplier.search({ ...request, infants: 0, passengers: 1, cabin: 'economy' });
     assert.equal(offers.length, 1);
     assert.match(seen[0].url, /api\.duffel\.com\/air\/offer_requests/);
-    assert.equal(seen[0].headers?.Authorization, 'Bearer test-token');
+    assert.equal(seen[0].headers?.Authorization, 'Bearer duffel_test_fixture');
   });
 
   test('HTTP errors become provider_error', async () => {
-    const supplier = new DuffelFlightSupplier({ mode: 'sandbox', accessToken: 'x', transport: fakeTransport({ status: 500, json: async () => ({}) }) });
+    const supplier = new DuffelFlightSupplier({ mode: 'sandbox', accessToken: 'duffel_test_fixture', transport: fakeTransport({ status: 500, json: async () => ({}) }) });
     await assert.rejects(supplier.search(request), (e: unknown) => e instanceof SupplierUnavailableError && e.reason === 'provider_error');
   });
 
   test('an abort becomes timeout', async () => {
     const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
-    const supplier = new DuffelFlightSupplier({ mode: 'sandbox', accessToken: 'x', transport: fakeTransport(abort) });
+    const supplier = new DuffelFlightSupplier({ mode: 'sandbox', accessToken: 'duffel_test_fixture', transport: fakeTransport(abort) });
     await assert.rejects(supplier.search(request), (e: unknown) => e instanceof SupplierUnavailableError && e.reason === 'timeout');
   });
 
   test('a network failure becomes provider_error', async () => {
-    const supplier = new DuffelFlightSupplier({ mode: 'sandbox', accessToken: 'x', transport: fakeTransport(new Error('ECONNRESET')) });
+    const supplier = new DuffelFlightSupplier({ mode: 'sandbox', accessToken: 'duffel_test_fixture', transport: fakeTransport(new Error('ECONNRESET')) });
     await assert.rejects(supplier.search(request), (e: unknown) => e instanceof SupplierUnavailableError && e.reason === 'provider_error');
   });
 });

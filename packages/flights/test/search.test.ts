@@ -51,7 +51,7 @@ describe('search validation', () => {
 
   test('rejects unknown cabins and currencies', () => {
     assert.ok(validateSearch({ ...base, cabin: 'couch' as never }, TODAY).errors.cabin);
-    assert.ok(validateSearch({ ...base, displayCurrency: 'JPY' as never }, TODAY).errors.displayCurrency);
+    assert.ok(validateSearch({ ...base, displayCurrency: 'XXX' as never }, TODAY).errors.displayCurrency);
   });
 
   test('toSupplierRequest refuses invalid input so no supplier call can be made', () => {

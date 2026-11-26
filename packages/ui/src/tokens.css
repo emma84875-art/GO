@@ -7,7 +7,7 @@
  *   Brand Purple  #512584  (81, 37, 132)
  *   Brand Orange  #FF5738  (255, 87, 56)
  *   White         #FFFFFF
- * Derived shades (NOT yet approved by owner):
+ * Derived shades (provisionally approved by the owner for Phase 18; brand identity preserved):
  *   Dark background #2B1248, dark surface #3B1B63, orange-text ink #1A0B2E.
  *
  * Contrast rules (computed, WCAG 2.x):
@@ -39,8 +39,8 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --color-bg: #2B1248;        /* Derived dark background: PENDING APPROVAL */
-    --color-surface: #3B1B63;   /* Derived dark surface: PENDING APPROVAL */
+    --color-bg: #2B1248;        /* Derived dark background: provisionally approved (Phase 18) */
+    --color-surface: #3B1B63;   /* Derived dark surface: provisionally approved (Phase 18) */
     --color-text: #FFFFFF;      /* 16.37:1 on dark background */
     --color-primary: #FF5738;   /* Brand Orange as control fill (purple fails on dark) */
     --color-on-primary: #1A0B2E;/* 5.90:1 on Brand Orange */

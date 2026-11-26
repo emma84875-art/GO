@@ -1,0 +1,41 @@
+# Render Blueprint for the GO search service (staging only).
+#
+# Free plan only. Free instances sleep after about 15 minutes without traffic, so the first search
+# after a sleep is slow. There is no paid upgrade in this file (zero-capital rule).
+#
+# autoDeploy is off: nothing deploys until the owner approves it in the Render dashboard.
+#
+# Secrets are never written here. Values marked "sync: false" are entered in the Render dashboard
+# by the owner. See docs/23-search-service.md for each value and where it comes from.
+
+services:
+  - type: web
+    name: go-search-staging
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm ci
+    startCommand: node apps/search/src/main.ts
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      # Node 22 runs the TypeScript sources directly. Keep this aligned with package.json engines.
+      - key: NODE_VERSION
+        value: 22.23.4
+      # Exact origin of the static site, for example https://<static-site>.onrender.com.
+      # Entered in the dashboard. Comma-separated for more than one origin. No wildcard.
+      - key: SEARCH_ALLOWED_ORIGINS
+        sync: false
+      # "none" until a Duffel sandbox token has been approved and set. The service then reports
+      # "not connected", and it never returns made-up results.
+      - key: SEARCH_SUPPLIER
+        value: none
+      # Duffel sandbox access token. Set only after the owner creates it. Store it as a secret.
+      - key: DUFFEL_ACCESS_TOKEN
+        sync: false
+      - key: SEARCH_SUPPLIER_TIMEOUT_MS
+        value: "15000"
+      - key: SEARCH_RATE_LIMIT
+        value: "30"
+      - key: SEARCH_RATE_WINDOW_SECONDS
+        value: "60"

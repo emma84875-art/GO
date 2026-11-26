@@ -1,7 +1,7 @@
-// Airport autocomplete. The dataset below is a DEVELOPMENT FIXTURE with a small set
-// of airports. Every entry is tagged so the UI can label it. Before launch it must
-// be replaced by a complete, licensed or public IATA-derived dataset. No licence has
-// been purchased (see docs/07).
+// Airport autocomplete. The dataset below is INCOMPLETE test and demo data: ten airports, not every airport.
+// A suggestion from this list does not mean the list is complete, and the page says so. Any three-letter code
+// can be typed. Before launch the list must be replaced by a complete, licensed or public IATA-derived dataset.
+// No licence has been purchased (see docs/07). Nothing is imported from OurAirports yet.
 
 export interface Airport {
   readonly iata: string;

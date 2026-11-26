@@ -8,6 +8,7 @@ import type { CurrencyCode } from '../../../core/src/money.ts';
 import { money } from '../../../core/src/money.ts';
 import {
   SupplierUnavailableError,
+  legsOf,
   type CabinClass,
   type FlightSupplier,
   type HoldPassenger,
@@ -101,9 +102,62 @@ export class MockFlightSupplier implements FlightSupplier {
       throw new RangeError('returnDate must be YYYY-MM-DD');
     }
 
+    if (request.legs !== undefined) {
+      for (const leg of request.legs) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(leg.departureDate)) throw new RangeError('leg departureDate must be YYYY-MM-DD');
+      }
+      const routes = request.legs.map((leg) =>
+        ROUTES.find((route) => route.origin === leg.origin && route.destination === leg.destination),
+      );
+      // A multi-city search is only fixture-priced when every leg has a route.
+      if (routes.some((route) => route === undefined)) return [];
+      return [this.buildMultiOffer(routes as readonly Route[], request)];
+    }
+
     return ROUTES.filter((route) => route.origin === request.origin && route.destination === request.destination).map(
       (route) => this.buildOffer(route, request),
     );
+  }
+
+  private buildMultiOffer(routes: readonly Route[], request: SearchRequest): Offer {
+    const legs = legsOf(request);
+    const multiplier = CABIN_MULTIPLIER[request.cabin];
+    const perPersonUsd = routes.reduce((sum, route) => sum + Math.round(route.baseUsdMinor * multiplier), 0);
+    const payingUnits = request.passengers + (request.infants ?? 0) * 0.1;
+    const totalUsd = Math.round(perPersonUsd * payingUnits);
+    const displayMinor = Math.round(totalUsd * MOCK_USD_RATES[request.displayCurrency]);
+
+    const journeys: Segment[][] = routes.map((route, index) => {
+      const departureUtc = `${legs[index].departureDate}T08:00:00Z`;
+      return [
+        {
+          origin: route.origin,
+          destination: route.destination,
+          departureUtc,
+          arrivalUtc: addMinutes(departureUtc, route.durationMinutes),
+          departureTimeZone: route.originZone,
+          arrivalTimeZone: route.destinationZone,
+          carrier: 'MK',
+          flightNumber: `MK${100 + index * 10 + (route.destination.charCodeAt(0) % 10)}`,
+        },
+      ];
+    });
+
+    return {
+      id: `fixture_multi_${routes.map((route) => `${route.origin}${route.destination}`).join('_')}_${request.cabin}_${request.passengers}`,
+      supplierPrice: money(totalUsd, 'USD'),
+      displayPrice: money(displayMinor, request.displayCurrency),
+      expiresAtUtc: `${legs[0].departureDate}T00:00:00Z`,
+      segments: journeys[0],
+      journeys,
+      fare: {
+        checkedBags: FIXTURE_BAGS[request.cabin],
+        cabinBags: 1,
+        refundable: false,
+        changeable: true,
+        restrictions: ['Development fixture: fare rules are placeholders, not a real fare'],
+      },
+    };
   }
 
   private buildOffer(route: Route, request: SearchRequest): Offer {

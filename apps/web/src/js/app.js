@@ -3,6 +3,8 @@
 
 import config from '../config.js';
 import { createAuthClient, aalOf, AuthError, PUBLIC_MESSAGES } from './auth-client.js';
+import { el } from './dom.js';
+import { viewHome, viewSearch } from './flight-views.js';
 import { accessFor, parseRoute } from './routes.js';
 import { ISSUE_TEXT, passwordIssues, validEmail } from './validation.js';
 
@@ -15,21 +17,6 @@ const client = configured
 
 let profile = null; // { role, aal, hasFactor, email } for the signed-in person, display only
 let recoveryMode = false;
-
-function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'text') node.textContent = value;
-    else if (key === 'class') node.className = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else node.setAttribute(key, value);
-  }
-  for (const child of [].concat(children)) {
-    if (child === null || child === undefined) continue;
-    node.append(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
-  return node;
-}
 
 function field(label, input) {
   return el('label', { class: 'field' }, [el('span', { text: label }), input]);
@@ -74,7 +61,11 @@ async function refreshProfile() {
 }
 
 function renderNav() {
-  const links = [el('a', { href: '#/', text: 'GO' })];
+  const brand = el('a', { href: '#/', class: 'brand', 'aria-label': 'GO home' }, [
+    el('img', { src: 'img/go-wordmark-purple.svg', alt: 'GO', class: 'logo logo-light', width: '96', height: '48' }),
+    el('img', { src: 'img/go-wordmark-white.svg', alt: '', class: 'logo logo-dark', width: '96', height: '48' }),
+  ]);
+  const links = [brand, el('a', { href: '#/search', text: 'Search flights' })];
   if (profile) {
     links.push(el('a', { href: '#/account', text: 'Account' }));
     links.push(el('a', { href: '#/account/security', text: 'Security' }));
@@ -87,14 +78,6 @@ function renderNav() {
     links.push(el('a', { href: '#/sign-up', text: 'Create account' }));
   }
   nav.replaceChildren(...links);
-}
-
-function viewHome() {
-  return el('section', {}, [
-    el('h1', { text: 'Premium international flights, booked with care' }),
-    el('p', { text: 'GO is being built in stages. Payments, ticketing, crypto and passport collection are switched off.' }),
-    el('p', {}, [el('a', { href: '#/sign-up', text: 'Create an account' }), ' or ', el('a', { href: '#/sign-in', text: 'sign in' }), '.']),
-  ]);
 }
 
 function viewSignUp() {
@@ -305,7 +288,8 @@ async function onSignOut() {
 }
 
 const VIEWS = {
-  home: viewHome,
+  home: () => viewHome(),
+  search: (params) => viewSearch(params),
   'sign-in': viewSignIn,
   'sign-up': viewSignUp,
   recover: viewRecover,
@@ -328,7 +312,7 @@ function render() {
   const view = VIEWS[route.name] ?? viewNotFound;
   app.replaceChildren(
     ...(configured ? [] : [message('This build is not connected to a Supabase project yet. Set the project URL and publishable key in config.js.', 'error')]),
-    view(),
+    view(route.params),
   );
   app.focus();
 }

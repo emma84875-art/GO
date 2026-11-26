@@ -446,3 +446,40 @@ describe('FixedWindowLimiter', () => {
     assert.throws(() => new FixedWindowLimiter({ limit: 1, windowSeconds: Number.NaN }), TypeError);
   });
 });
+
+describe('FixedWindowLimiter bounds (Phase 18.4)', () => {
+  test('when the table is full, a new address is refused and known addresses keep their own count', () => {
+    let clock = 0;
+    const limiter = new FixedWindowLimiter({ limit: 1, windowSeconds: 60 }, () => clock, 2);
+    assert.equal(limiter.check('a').allowed, true);
+    assert.equal(limiter.check('b').allowed, true);
+    const refused = limiter.check('c');
+    assert.equal(refused.allowed, false);
+    assert.ok(refused.retryAfterSeconds >= 1);
+    assert.equal(limiter.size, 2, 'the table did not grow past its cap');
+    assert.equal(limiter.check('a').allowed, false, 'a still has its own limit of one');
+  });
+
+  test('expired windows are removed on schedule, so a new address gets in again', () => {
+    let clock = 0;
+    const limiter = new FixedWindowLimiter({ limit: 1, windowSeconds: 10 }, () => clock, 2);
+    limiter.check('a');
+    limiter.check('b');
+    clock = 10_000;
+    assert.equal(limiter.check('c').allowed, true);
+    assert.equal(limiter.size, 1, 'the expired addresses were removed');
+  });
+
+  test('an idle address is removed after its window, even when the table is small', () => {
+    let clock = 0;
+    const limiter = new FixedWindowLimiter({ limit: 5, windowSeconds: 10 }, () => clock);
+    limiter.check('idle');
+    clock = 10_000;
+    limiter.check('active');
+    assert.equal(limiter.size, 1);
+  });
+
+  test('the cap must be a positive integer', () => {
+    assert.throws(() => new FixedWindowLimiter({ limit: 1, windowSeconds: 60 }, () => 0, 0), TypeError);
+  });
+});

@@ -34,7 +34,7 @@ describe('money', () => {
 
   test('formats using the currency minor-unit exponent', () => {
     const formatted = formatMoney(money(123456, 'NGN'), 'en-NG');
-    assert.match(formatted, /1,234\.56/);
+    assert.equal(formatted, 'NGN 1,234.56');
   });
 });
 

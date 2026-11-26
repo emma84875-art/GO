@@ -1,8 +1,9 @@
 // HTTP server for GO's API.
 //
 // Request order (each step can end the request, and nothing later runs):
-//   1. Rate limit by socket remote address. X-Forwarded-For is never read: there is no trusted proxy
-//      option yet, so a client cannot choose its own address.
+//   1. Rate limit by socket remote address, except for a route that sets rateLimited: false (the health
+//      check). X-Forwarded-For is never read: there is no trusted proxy option yet, so a client cannot
+//      choose its own address.
 //   2. OPTIONS preflight: answered with 204 and no route runs.
 //   3. Route lookup: 404 for an unknown path, 405 for a known path with another method.
 //   4. CSRF decision for unsafe methods (see csrf.ts).
@@ -48,6 +49,16 @@ export type Route = {
   readonly path: string;
   readonly auth: 'public' | 'bearer';
   readonly rawBody?: boolean;
+  // Opt-in for a public route that is called from another site and holds no cookie session (for
+  // example the search service, called from the static site on another host). It skips only the
+  // Sec-Fetch-Site cross-site refusal. The Origin rule still applies. Ignored on bearer routes.
+  readonly crossSite?: boolean;
+  // false: this route never uses cookies or Authorization, so Access-Control-Allow-Credentials is left out
+  // for it. The header is left out for a path only when every route on that path sets false.
+  readonly credentials?: boolean;
+  // false: this exact route (path and method) is not counted by the rate limiter. Use only for a cheap
+  // route that a platform health check calls, so a burst of probes cannot mark the service unhealthy.
+  readonly rateLimited?: boolean;
   readonly handler: (ctx: RouteContext) => Promise<RouteResult> | RouteResult;
 };
 
@@ -176,25 +187,32 @@ export function createServer(config: ServerConfig, routes: readonly Route[]): Se
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const method = (req.method ?? 'GET').toUpperCase();
     const origin = originHeader(req.headers.origin);
-    const cors = corsDecision(origin, method, { allowedOrigins: config.allowedOrigins });
+    const rawUrl = req.url ?? "/";
+    const queryStart = rawUrl.indexOf("?");
+    const path = queryStart === -1 ? rawUrl : rawUrl.slice(0, queryStart);
+    const query = new URLSearchParams(queryStart === -1 ? "" : rawUrl.slice(queryStart + 1));
+    // Credentials are allowed unless every route on this path opts out (see Route.credentials).
+    const pathRoutes = table.get(path);
+    const credentials = !(pathRoutes !== undefined && [...pathRoutes.values()].every((r) => r.credentials === false));
+    const cors = corsDecision(origin, method, { allowedOrigins: config.allowedOrigins, credentials });
     const common: Record<string, string> = { ...baseHeaders, ...cors.headers };
     const clientIp = req.socket.remoteAddress ?? 'unknown';
 
-    const limit = limiter.check(clientIp);
-    if (!limit.allowed) {
-      send(res, 429, { ...common, 'Retry-After': String(limit.retryAfterSeconds) }, { error: 'rate_limited' });
-      return;
+    // Only a route that opts out (rateLimited: false) skips the limiter. Everything else, including
+    // unknown paths and other methods, is counted.
+    const exempt = table.get(path)?.get(method)?.rateLimited === false;
+    if (!exempt) {
+      const limit = limiter.check(clientIp);
+      if (!limit.allowed) {
+        send(res, 429, { ...common, 'Retry-After': String(limit.retryAfterSeconds) }, { error: 'rate_limited' });
+        return;
+      }
     }
 
     if (method === 'OPTIONS') {
       send(res, 204, common);
       return;
     }
-
-    const rawUrl = req.url ?? '/';
-    const queryStart = rawUrl.indexOf('?');
-    const path = queryStart === -1 ? rawUrl : rawUrl.slice(0, queryStart);
-    const query = new URLSearchParams(queryStart === -1 ? '' : rawUrl.slice(queryStart + 1));
 
     const methods = table.get(path);
     if (methods === undefined) {
@@ -207,10 +225,11 @@ export function createServer(config: ServerConfig, routes: readonly Route[]): Se
       return;
     }
 
+    const crossSiteOptIn = route.crossSite === true && route.auth === 'public';
     const csrf = csrfDecision({
       method,
       origin,
-      secFetchSite: singleHeader(req.headers['sec-fetch-site']),
+      secFetchSite: crossSiteOptIn ? undefined : singleHeader(req.headers['sec-fetch-site']),
       cookieSessionPresent: hasSessionCookie(singleHeader(req.headers.cookie), config.sessionCookieName),
       allowedOrigins: config.allowedOrigins,
     });

@@ -8,11 +8,12 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "test:unit": "node --test packages/core/test/core.test.ts packages/core/test/foundation.test.ts packages/core/test/booking.test.ts packages/flights/test/mock.test.ts packages/flights/test/search.test.ts packages/flights/test/offer-filters.test.ts packages/flights/test/airports.test.ts packages/flights/test/supplier-responses.test.ts packages/flights/test/booking.test.ts packages/payments/test/payments.test.ts packages/fulfilment/test/fulfilment.test.ts packages/portal/test/portal.test.ts packages/support/test/support.test.ts packages/notify/test/notify.test.ts packages/auth/test/token.test.ts packages/auth/test/money-access.test.ts packages/auth/test/access-control.test.ts packages/auth/test/account-security.test.ts packages/auth/test/mfa-reset.test.ts packages/http/test/http.test.ts packages/security/test/field-crypto.test.ts packages/security/test/log-fields.test.ts packages/passport/test/passport.test.ts apps/web/test/web.test.js",
+    "test:unit": "node --disable-warning=ExperimentalWarning scripts/vendor-web.mjs && node --test packages/core/test/core.test.ts packages/core/test/currency.test.ts packages/core/test/currency-list-one.test.ts packages/core/test/foundation.test.ts packages/core/test/booking.test.ts packages/flights/test/mock.test.ts packages/flights/test/multi-city.test.ts packages/flights/test/itinerary-filters.test.ts packages/flights/test/return-trip-filters.test.ts packages/flights/test/corrections.test.ts packages/flights/test/currency-18-7.test.ts packages/flights/test/search.test.ts packages/flights/test/offer-filters.test.ts packages/flights/test/airports.test.ts packages/flights/test/supplier-responses.test.ts packages/flights/test/booking.test.ts packages/payments/test/payments.test.ts packages/fulfilment/test/fulfilment.test.ts packages/portal/test/portal.test.ts packages/support/test/support.test.ts packages/notify/test/notify.test.ts packages/auth/test/token.test.ts packages/auth/test/money-access.test.ts packages/auth/test/access-control.test.ts packages/auth/test/account-security.test.ts packages/auth/test/mfa-reset.test.ts packages/http/test/http.test.ts apps/search/test/search-service.test.ts apps/search/test/cors-regression.test.ts packages/security/test/field-crypto.test.ts packages/security/test/log-fields.test.ts packages/passport/test/passport.test.ts apps/web/test/web.test.js apps/web/test/flights.test.js apps/web/test/currency.test.js apps/web/test/multi-city.test.js",
     "test:db": "bash scripts/test-db.sh",
     "test": "npm run test:unit && npm run test:db && npm run build:web",
     "audit": "npm audit --omit=dev --audit-level=high",
     "ci": "npm ci && npm run test:unit",
-    "build:web": "node scripts/build-web.mjs"
+    "build:web": "node --disable-warning=ExperimentalWarning scripts/vendor-web.mjs && node scripts/build-web.mjs",
+    "start:search": "node apps/search/src/main.ts"
   }
 }

@@ -44,8 +44,9 @@ export function convertMoney(amount: Money, snapshot: FxRateSnapshot): Money {
     throw new TypeError(`Rate snapshot is for ${snapshot.from}, amount is ${amount.currency}`);
   }
   if (snapshot.rateScaled <= 0n) throw new RangeError('FX rate must be positive');
-  // Both currencies are supported with 2 minor-unit digits, so no exponent adjustment is needed.
-  // The function still checks it, so a future currency with a different exponent fails loudly.
+  // Conversion between currencies with different minor-unit exponents (for example NGN to KWD) is not
+  // implemented. It fails loudly rather than moving the decimal point. The Duffel adapter reaches this only
+  // with a fresh snapshot from an approved FX source. No such source exists, so production never gets here.
   if (minorUnitExponent(amount.currency) !== minorUnitExponent(snapshot.to)) {
     throw new RangeError('Exponent conversion is not implemented for these currencies');
   }

@@ -6,13 +6,19 @@
 
 export const STAFF_ROLES = ['support', 'operations', 'admin'];
 
-// Parses the URL hash into a route. Fragments that carry sign-in tokens are handled separately.
+const KNOWN = ['', 'search', 'sign-in', 'sign-up', 'recover', 'reset', 'account', 'account/security', 'staff'];
+
+// Parses the URL hash into a route. Query parameters after '?' are returned as params (search only).
+// Fragments that carry sign-in tokens are handled separately.
 export function parseRoute(hash) {
-  const path = (hash || '').replace(/^#/, '');
-  if (path.includes('access_token=')) return { name: 'auth-callback', params: {} };
-  const clean = path.replace(/^\/+/, '').replace(/\/+$/, '');
-  const known = ['', 'sign-in', 'sign-up', 'recover', 'reset', 'account', 'account/security', 'staff'];
-  if (!known.includes(clean)) return { name: 'not-found', params: {} };
+  const raw = (hash || '').replace(/^#/, '');
+  if (raw.includes('access_token=')) return { name: 'auth-callback', params: {} };
+  const [pathPart = '', query = ''] = raw.split('?');
+  const clean = pathPart.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (clean === 'search') {
+    return { name: 'search', params: Object.fromEntries(new URLSearchParams(query)) };
+  }
+  if (!KNOWN.includes(clean)) return { name: 'not-found', params: {} };
   return { name: clean === '' ? 'home' : clean, params: {} };
 }
 
@@ -21,6 +27,7 @@ export function parseRoute(hash) {
 export function accessFor(route, session) {
   switch (route.name) {
     case 'home':
+    case 'search':
     case 'sign-in':
     case 'sign-up':
     case 'recover':

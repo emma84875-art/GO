@@ -36,20 +36,24 @@ export function validateAllowedOrigins(origins: readonly string[]): void {
   }
 }
 
+// credentials: false leaves out Access-Control-Allow-Credentials for this request. The default is true,
+// which is the behaviour for listed origins on every route. A route that never uses cookies or
+// Authorization should set it to false.
 export function corsDecision(
   origin: string | undefined,
   method: string,
-  config: { allowedOrigins: readonly string[] },
+  config: { allowedOrigins: readonly string[]; credentials?: boolean },
 ): CorsDecision {
   validateAllowedOrigins(config.allowedOrigins);
 
   const preflight = method.toUpperCase() === 'OPTIONS';
   const allowed = origin !== undefined && config.allowedOrigins.includes(origin);
+  const credentials = config.credentials !== false;
 
   const headers: Record<string, string> = { Vary: 'Origin' };
   if (allowed) {
     headers['Access-Control-Allow-Origin'] = origin;
-    headers['Access-Control-Allow-Credentials'] = 'true';
+    if (credentials) headers['Access-Control-Allow-Credentials'] = 'true';
     if (preflight) {
       headers['Access-Control-Allow-Methods'] = ALLOWED_METHODS;
       headers['Access-Control-Allow-Headers'] = ALLOWED_REQUEST_HEADERS;

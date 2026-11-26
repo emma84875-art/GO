@@ -4,7 +4,16 @@
 // sandbox results as live fares.
 
 import { validateSearch, toSupplierRequest, type FlightSearchInput } from './search.ts';
-import { SupplierUnavailableError, type FlightSupplier, type Offer, type SupplierFailureReason, type SupplierMode } from './supplier.ts';
+import {
+  NO_EXCLUDED_OFFERS,
+  SupplierUnavailableError,
+  type ExcludedOffers,
+  type FlightSupplier,
+  type Offer,
+  type SupplierFailureReason,
+  type SupplierMode,
+  type SupplierSearchResult,
+} from './supplier.ts';
 
 export interface SourceLabel {
   readonly name: string;
@@ -12,8 +21,8 @@ export interface SourceLabel {
 }
 
 export type SearchOutcome =
-  | { readonly status: 'ok'; readonly source: SourceLabel; readonly offers: readonly Offer[] }
-  | { readonly status: 'empty'; readonly source: SourceLabel }
+  | { readonly status: 'ok'; readonly source: SourceLabel; readonly offers: readonly Offer[]; readonly excluded: ExcludedOffers }
+  | { readonly status: 'empty'; readonly source: SourceLabel; readonly excluded: ExcludedOffers }
   | { readonly status: 'invalid'; readonly errors: Readonly<Record<string, string>> }
   | {
       readonly status: 'unavailable';
@@ -22,10 +31,12 @@ export type SearchOutcome =
       readonly message: string;
     };
 
+// Only the search method is needed here. The narrow type lets the search service wrap a supplier
+// with a deadline and an error boundary without implementing the rest of the interface.
 export async function runFlightSearch(
   input: FlightSearchInput,
   today: string,
-  supplier: FlightSupplier,
+  supplier: Pick<FlightSupplier, 'name' | 'mode' | 'search' | 'searchDetailed'>,
 ): Promise<SearchOutcome> {
   const source: SourceLabel = { name: supplier.name, mode: supplier.mode };
 
@@ -35,9 +46,12 @@ export async function runFlightSearch(
 
   const request = toSupplierRequest(input, today);
   try {
-    const offers = await supplier.search(request);
-    if (offers.length === 0) return { status: 'empty', source };
-    return { status: 'ok', source, offers };
+    // A supplier without searchDetailed returns offers only, so nothing is reported as excluded.
+    const result: SupplierSearchResult = supplier.searchDetailed
+      ? await supplier.searchDetailed(request)
+      : { offers: await supplier.search(request), excluded: NO_EXCLUDED_OFFERS };
+    if (result.offers.length === 0) return { status: 'empty', source, excluded: result.excluded };
+    return { status: 'ok', source, offers: result.offers, excluded: result.excluded };
   } catch (error) {
     // Only supplier-side failures become UI states. Anything else is a bug and is
     // rethrown so it is not hidden behind a friendly message.
