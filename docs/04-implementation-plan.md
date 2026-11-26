@@ -344,3 +344,69 @@ Access follows section 3: `support` reads and adds notes; `admin` acts.
 | Package installs | **Still blocked** at the time of this update. Owner to enable through the approved settings | this document |
 
 **Blocked until the owner acts:** Phase 1 (scaffold and tests that need packages), any supplier or payment sandbox, and any production activity.
+
+---
+
+## 16. Roadmap update after the Phase 19.0 decisions (26 Nov 2026)
+
+Source: `24-phase-19-0-decision-record.md`. This section supersedes the open decisions in section 13, the "Next steps" in section 14, and the Option A/B/C position described in section 5 and `06`, where they differ.
+
+### 16.1 What changed
+
+| Area | Before | After |
+|---|---|---|
+| Payment model | Option A preferred; Option B open | **Option A only.** Capture-now and Option B not approved. Option C excluded |
+| Payment providers | Paystack first, Flutterwave alternative | Same order, **investigation only.** Neither approved for production until the five verifications in `24` D2 are in writing |
+| Supplier funding | Option B open for owner decision | **Zero GO-funded supplier exposure.** Conflict E2 (whether authorisation counts as "secured") is open |
+| Supplier or partner | Duffel assumed as supplier; Duffel enquiry drafted | **No supplier confirmed.** Architecture supports an authorised partner. No enquiry, application or commitment without owner approval |
+| Currency | Foreign offers displayed; FX not yet defined | NGN is the payment currency. Foreign offers may be **viewed, not booked**, until FX is approved (E4) |
+| Passenger data | Field encryption planned for milestone 3 | Minimum collection. DOB, nationality and ticket numbers encrypted if stored. Passport collection disabled |
+| Confirmation | Not formally defined | Confirmed only after independent verification of names, itinerary, supplier reference and payment conditions |
+
+### 16.2 Roadmap phases, revised
+
+| Phase | Status | Gate |
+|---|---|---|
+| 0 to 18.7 | Complete (earlier phases, including currency work in `23`) | None |
+| **19.0 Decision record** | **Recorded** (`24`) | Owner approval of `24` |
+| **19.1 Booking state model (single customer-facing vocabulary, reconciled from five)** | **Not started. Blocked** | Owner approval in writing; conflict E2 resolved or explicitly deferred |
+| 19.2 Partner interface (ticketing through an authorised party; no supplier named) | Not started. Blocked | E3 partner identified and approved; owner approval |
+| 19.3 Payment provider adapter in test mode (authorise, capture, release, webhooks) | Not started. Blocked | Owner approves one named provider in writing; E1 test-mode terms confirmed |
+| 19.4 FX and NGN-only checkout guard | Not started. Blocked | E4 approved |
+| 19.5 Passenger data encryption and retention | Not started. Blocked | E5 counsel review; owner approval |
+| 3 (Duffel sandbox, search and order-shape only) | **Narrowed.** Only after Duffel sandbox access is approved in writing. No ticketing assumed | Owner approval |
+| 4 (payments in test mode) | **Replaced by 19.3** | As 19.3 |
+| 5 (launch readiness) | Unchanged in substance. Requires E1 to E7 closed | All blockers closed |
+| 6 (production launch) | Unchanged. Not before every gate above | Owner approval |
+
+Phases 19.1 to 19.5 are listed for planning only. None may begin until the owner approves Phase 19.1 in writing.
+
+### 16.3 Superseded items
+
+- Section 14 step 2 ("You send the Duffel enquiry" and the Paystack enquiry) is **withdrawn**. No enquiry is sent without owner approval, as D6 restricts supplier and provider applications.
+- Section 13 "Still open" items 1 (money-safety policy, Option A/B choice) is **closed** by D1 and D3. Item 2 (email and monitoring, `08`) and items 3 to 6 remain open and are unchanged.
+- Section 15 "Blocked until the owner acts" is extended by the E1 to E7 dependencies in `24` section 4.
+
+### 16.4 Items that the implementation must not do
+
+- Capture before a verified ticket (`06` invariant 1 and D1).
+- Pay a supplier from GO money before the resolution in D3 is chosen.
+- Accept a non-NGN offer into checkout (D5).
+- Store passport numbers or ticket numbers without encryption (D6).
+- Mark a booking confirmed before verification (D7).
+- Enable any provider or supplier in production (sections 0.2, 0.5 and 0.6 of this plan).
+
+### 16.5 Next action
+
+Owner review of `24`. In particular, the owner must resolve conflict E2 (D3) before any design of the ticketing workflow proceeds. No code change follows until Phase 19.1 is approved in writing.
+
+### 16.6 Final D3 resolution (26 Nov 2026, 04:44 local time)
+
+Owner approved the decision record and resolved D3 as option (c). This supersedes 16.1 (supplier funding row), 16.4 (the pay-from-GO-funds rule is now stated as a standing rule) and 16.5.
+
+- Real customer bookings require an authorised partner or consolidator that carries supplier funding under an approved commercial arrangement, with no GO working capital, prefunding, unsecured credit or airline payment exposure.
+- Customer authorisation does not permit GO to pay supplier costs from its own funds.
+- If no partner supports this, real bookings stay disabled. No fallback that exposes GO to supplier funding risk.
+- Duffel balance funding (Route A in `14`) is withdrawn. Duffel is not assumed able to fund or issue tickets for GO.
+- Phase 19.1 is not approved. Its gating dependency is now E3 (partner identification and approval).
+- Architecture changes required in later phases are listed in `24` section 6.

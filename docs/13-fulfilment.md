@@ -67,3 +67,10 @@ Because idempotency at Duffel is unconfirmed, an unclear order-creation outcome 
 3. Confirm the infant document rule with the supplier.
 4. Approve company funding of the Duffel balance. Paying the airline from our balance before capture means we carry the risk if capture fails. This is an outstanding dependency.
 5. Approve production ticketing only after a signed supplier agreement, live credentials, and the operational runbook exist.
+
+## Update: 26 Nov 2026 (decision `24`, D3 option (c))
+
+- Decision 4 in this document (company funding of the Duffel balance) is **withdrawn**. No GO-funded balance will be used.
+- Orchestrator step 4 ("pay once" from the supplier balance) must be replaced by partner-funded issuance under an approved agreement. No code path may pay a supplier from GO funds.
+- A settlement step with the partner follows capture (sequence step 7 in `24`).
+- Current code is fixture-only and not connected to routes. It must be changed in Phase 19.2 before any supplier path is enabled.

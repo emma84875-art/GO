@@ -122,3 +122,7 @@ Blocked for a different reason: package installs are disabled, so the Next.js UI
 - Travelpayouts payout currency, minimum, KYC and Nigeria eligibility.
 - Paystack and Flutterwave NGN pre-authorisation and merchant fees.
 - Any free-tier limits for hosting, database or email providers.
+
+## Update: 26 Nov 2026
+
+Route A (Duffel pre-funded balance, GO-funded) is **withdrawn** under `24` D3 option (c). GO does not fund supplier balances. A route is usable only if an authorised partner carries the funding under an approved agreement. Until a partner is approved, real customer bookings stay disabled.

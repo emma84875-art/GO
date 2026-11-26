@@ -136,3 +136,13 @@ Invariants 1, 4 and 6 are partly enforced in the schema already. The rest go int
 | Ticket issuance and regulated services | **Disabled** until the required approvals are obtained |
 
 No provider confirmation has been received. Payment code remains test-only.
+
+## Approval record update: 26 Nov 2026 (supersedes the funding steps above)
+
+Decision record `24` is approved. Where this document differs from `24`, `24` governs.
+
+- **Option A only** for payments: authorise, ticket through the partner, verify, capture, then settle with the partner.
+- **Option B is not approved.** Step 6 "supplier paid from our balance" is withdrawn.
+- **D3 resolved as option (c):** a supplier or authorised consolidator that carries the funding is required. GO does not pay supplier costs from its own funds, and customer authorisation does not change that.
+- Real customer bookings are disabled until a partner meeting D3 is approved (E3 in `24`).
+- The approved sequence is `24` section 3.

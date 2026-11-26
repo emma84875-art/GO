@@ -47,3 +47,7 @@ Not verified in this session: Paystack's `/transaction/initialize` and `/transac
 - No background expiry job. The sweep has to be called by a scheduler (pg-boss not installed).
 - Refund on the Paystack and Flutterwave adapters is not implemented.
 - Decisions for the owner: approve the payment provider to pursue in writing; approve Option A as the only capture path; approve the fee policy; approve any live credentials, paid account or commercial commitment.
+
+## Update: 26 Nov 2026
+
+Payment model is Option A only, as set out in `24` (D1, section 3). The capture gate's "supplier fulfilment confirmed" means verified ticket issuance by the authorised partner, which carries the supplier funding under D3. Capture follows verification, and partner settlement follows capture (sequence step 7). This is not yet implemented. Persistence, Paystack and Flutterwave endpoints and fee terms remain open, as listed above.
