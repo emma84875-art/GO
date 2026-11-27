@@ -65,8 +65,8 @@ function setup(overrides: Partial<Setup> = {}): { svc: SupportService; s: Setup 
   const s: Setup = {
     bookings: new Map([
       ['B-ALICE', booking('B-ALICE', ALICE.userId, 'confirmed', true)],
-      ['B-ALICE-NR', booking('B-ALICE-NR', ALICE.userId, 'ticketed', false)],
-      ['B-ALICE-HELD', booking('B-ALICE-HELD', ALICE.userId, 'held', true)],
+      ['B-ALICE-NR', booking('B-ALICE-NR', ALICE.userId, 'verified', false)],
+      ['B-ALICE-HELD', booking('B-ALICE-HELD', ALICE.userId, 'quoted', true)],
       ['B-BOB', booking('B-BOB', BOB.userId, 'confirmed', true)],
     ]),
     payments: new Map([['intent-B-ALICE', { status: 'captured', capturedMinor: 85_000_000, refundedMinor: 0, refundCapability: 'unconfirmed' }]]),

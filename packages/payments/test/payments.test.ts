@@ -20,7 +20,8 @@ import type { Actor } from '../../auth/src/actor.ts';
 const PAY: Actor = { kind: 'system', service: 'payments' };
 const FUL: Actor = { kind: 'system', service: 'fulfilment' };
 import { SupplierUnavailableError, type FlightSupplier, type Offer } from '../../flights/src/supplier.ts';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { BOOKING_PAYMENT_PROVIDERS } from '../src/payment-flow.ts';
 
 const NOW = '2026-11-12T09:30:00Z';
 const HOLD_EXPIRY = '2026-11-12T10:00:00Z';
@@ -48,7 +49,9 @@ async function bookingFor(overrides: Partial<PaymentBooking> = {}): Promise<Paym
 }
 
 function signedWebhook(provider: FixturePaymentProvider, body: Record<string, unknown>) {
-  const raw = JSON.stringify(body);
+  // Every fixture event has a provider event id. The same body always gets the same id, so a resend is a duplicate.
+  const withId = { id: createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16), ...body };
+  const raw = JSON.stringify(withId);
   return { raw, headers: { [FIXTURE_WEBHOOK_HEADER]: provider.sign(raw) } };
 }
 
@@ -67,8 +70,12 @@ async function started(overrides: Partial<PaymentBooking> = {}, supplier: Flight
 describe('payment state machine', () => {
   test('allows the documented path and refuses skips', () => {
     assert.equal(canTransition('initiated', 'authorised'), true);
-    assert.equal(canTransition('authorised', 'captured'), true);
-    assert.equal(canTransition('initiated', 'captured'), true);
+    assert.equal(canTransition('authorised', 'capture_requested'), true);
+    assert.equal(canTransition('capture_requested', 'captured'), true);
+    // captured is reachable only from capture_requested: no request, no capture.
+    assert.equal(canTransition('authorised', 'captured'), false);
+    assert.equal(canTransition('initiated', 'captured'), false);
+    assert.equal(canTransition('review_required', 'captured'), false);
     assert.equal(canTransition('refunded', 'captured'), false);
     assert.equal(canTransition('failed', 'captured'), false);
     assert.throws(() => transition('failed', 'captured'), RangeError);
@@ -84,7 +91,7 @@ describe('successful payment (fixture)', () => {
     const applied = await processWebhook(store, provider, hook.raw, hook.headers, NOW);
     assert.deepEqual(applied, { status: 'applied', intentId: intent.id, to: 'authorised' });
 
-    const captured = await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    const captured = await captureAfterFulfilment(store, FUL, provider, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
     assert.equal(captured.status, 'captured');
     assert.equal(store.getIntent(intent.id)?.capturedMinor, intent.amount.amountMinor);
 
@@ -104,7 +111,7 @@ describe('failed payment (fixture)', () => {
     const out = await processWebhook(store, provider, hook.raw, hook.headers, NOW);
     assert.equal(out.status, 'applied');
     assert.equal(store.getIntent(intent.id)?.status, 'failed');
-    const capture = await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    const capture = await captureAfterFulfilment(store, FUL, provider, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
     assert.equal(capture.status, 'blocked');
   });
 });
@@ -198,7 +205,7 @@ describe('amount mismatches', () => {
   test('capture refuses when the booking total differs from the intent', async () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
-    const out = await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor + 1, 'NGN', NOW);
+    const out = await captureAfterFulfilment(store, FUL, provider, intent.id, 'verified', intent.amount.amountMinor + 1, 'NGN', NOW);
     assert.equal(out.status, 'blocked');
     assert.match(out.status === 'blocked' ? out.reasons.join(' ') : '', /does not match/);
   });
@@ -251,7 +258,7 @@ describe('refunds', () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
     await processWebhook(store, provider, ...(() => { const h = signedWebhook(provider, { event: 'a', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' }); return [h.raw, h.headers, NOW] as const; })());
-    await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    await captureAfterFulfilment(store, FUL, provider, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
     const out = await refund(store, FUL, provider, intent.id, intent.amount.amountMinor + 1, NOW);
     assert.equal(out.status, 'blocked');
   });
@@ -260,7 +267,7 @@ describe('refunds', () => {
     const { store, provider, intent } = await started();
     provider.setState(intent.providerRef!, 'authorised', intent.amount);
     await processWebhook(store, provider, ...(() => { const h = signedWebhook(provider, { event: 'a', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' }); return [h.raw, h.headers, NOW] as const; })());
-    await captureAfterFulfilment(store, FUL, provider, intent.id, 'confirmed', intent.amount.amountMinor, 'NGN', NOW);
+    await captureAfterFulfilment(store, FUL, provider, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
     const broken = Object.assign(Object.create(Object.getPrototypeOf(provider)), provider, { refund: async () => { throw new Error('network'); } });
     const out = await refund(store, FUL, broken, intent.id, 100, NOW);
     assert.equal(out.status, 'review_required');
@@ -327,22 +334,26 @@ describe('booking link: start payment only for a valid booking', () => {
   });
 });
 
-describe('real providers never start payments without confirmed authorisation', () => {
-  test('Paystack NGN authorisation is refused', async () => {
-    const out = await startPayment(new PaymentStore(), PAY, new PaystackPaymentProvider({ mode: 'sandbox', secretKey: 'sk_test_x' }),
-      new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
-    assert.equal(out.status === 'blocked' && out.reason, 'authorisation_not_confirmed');
+describe('real providers are outside the booking payment flow', () => {
+  test('the booking payment allow-list holds only the fixture provider', () => {
+    assert.deepEqual([...BOOKING_PAYMENT_PROVIDERS], ['fixture']);
   });
 
-  test('Flutterwave authorisation is refused until confirmed', async () => {
+  test('Paystack is excluded by name: it captures on payment, before ticket verification', async () => {
+    const out = await startPayment(new PaymentStore(), PAY, new PaystackPaymentProvider({ mode: 'sandbox', secretKey: 'sk_test_x' }),
+      new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
+    assert.equal(out.status === 'blocked' && out.reason, 'provider_excluded');
+  });
+
+  test('Flutterwave is excluded by name until its capture is confirmed', async () => {
     const out = await startPayment(new PaymentStore(), PAY, new FlutterwavePaymentProvider({ mode: 'sandbox', secretHash: 'h' }),
       new MockFlightSupplier(), await bookingFor(), { productionEnabled: false }, NOW);
-    assert.equal(out.status === 'blocked' && out.reason, 'authorisation_not_confirmed');
+    assert.equal(out.status === 'blocked' && out.reason, 'provider_excluded');
   });
 });
 
 describe('Paystack webhook verification', () => {
-  const body = JSON.stringify({ event: 'charge.success', data: { reference: 'r1', amount: 15000000, currency: 'NGN', status: 'success' } });
+  const body = JSON.stringify({ event: 'charge.success', data: { id: 4001, reference: 'r1', amount: 15000000, currency: 'NGN', status: 'success' } });
   const sign = (secret: string, raw: string) => createHmac('sha512', secret).update(raw).digest('hex');
 
   test('accepts a correct HMAC-SHA512 signature over the raw body', () => {
@@ -366,7 +377,7 @@ describe('Paystack webhook verification', () => {
   test('maps a successful charge to captured and a failure to failed', () => {
     const p = new PaystackPaymentProvider({ mode: 'sandbox', secretKey: 'k' });
     assert.equal(p.parseWebhook(body).reportedState, 'captured');
-    assert.equal(p.parseWebhook(JSON.stringify({ event: 'charge.failed', data: { reference: 'r', amount: 1, currency: 'NGN' } })).reportedState, 'failed');
+    assert.equal(p.parseWebhook(JSON.stringify({ event: 'charge.failed', data: { id: 4002, reference: 'r', amount: 1, currency: 'NGN' } })).reportedState, 'failed');
   });
 
   test('will not call the network for authorisation or for production without approval', async () => {
@@ -498,5 +509,87 @@ describe('payment attempts are distinct (regression)', () => {
     const secondIntent = store.getIntent((second as { intentId: string }).intentId)!;
     assert.notEqual(secondIntent.reference, firstIntent.reference);
     assert.notEqual(secondIntent.id, firstIntent.id);
+  });
+});
+
+describe('provider events and capture controls (docs/25, section 9)', () => {
+  test('a provider capture for an intent with no capture request goes to review, never to captured', async () => {
+    const { store, provider, intent } = await started();
+    // The provider's own status is the authority. The customer has authorised the payment at the provider.
+    provider.setState(intent.providerRef as string, 'authorised', intent.amount);
+    const auth = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    assert.equal((await processWebhook(store, provider, auth.raw, auth.headers, NOW)).status, 'applied');
+    provider.setState(intent.providerRef as string, 'captured', intent.amount); // the provider says captured, with no request from GO
+    const cap = signedWebhook(provider, { event: 'charge', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'captured' });
+    const out = await processWebhook(store, provider, cap.raw, cap.headers, NOW);
+    assert.equal(out.status, 'review_required');
+    assert.notEqual(store.getIntent(intent.id)?.status, 'captured');
+  });
+
+  test('capture is requested first and confirmed only from the provider status, and both steps are audited', async () => {
+    const { store, provider, intent } = await started();
+    // The provider's own status is the authority. The customer has authorised the payment at the provider.
+    provider.setState(intent.providerRef as string, 'authorised', intent.amount);
+    const auth = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    await processWebhook(store, provider, auth.raw, auth.headers, NOW);
+    const out = await captureAfterFulfilment(store, FUL, provider, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
+    assert.equal(out.status, 'captured');
+    assert.equal(store.getIntent(intent.id)?.capturedMinor, intent.amount.amountMinor);
+    const events = store.audit().map((e) => e.event);
+    const requested = events.indexOf('capture_requested');
+    const confirmed = events.indexOf('capture_confirmed');
+    assert.ok(requested >= 0 && confirmed > requested, events.join(','));
+  });
+
+  test('a capture the provider reports as not taken returns the hold to authorised, not to captured', async () => {
+    const { store, provider, intent } = await started();
+    // The provider's own status is the authority. The customer has authorised the payment at the provider.
+    provider.setState(intent.providerRef as string, 'authorised', intent.amount);
+    const auth = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    await processWebhook(store, provider, auth.raw, auth.headers, NOW);
+    // The capture call succeeds at the transport level, but the provider's status still says authorised.
+    const declined = Object.assign(Object.create(provider), { capture: async () => undefined });
+    const out = await captureAfterFulfilment(store, FUL, declined, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
+    assert.equal(out.status, 'review_required');
+    assert.equal(store.getIntent(intent.id)?.status, 'authorised');
+  });
+
+  test('a provider amount that differs when the capture is confirmed goes to review, never to captured', async () => {
+    const { store, provider, intent } = await started();
+    // The provider's own status is the authority. The customer has authorised the payment at the provider.
+    provider.setState(intent.providerRef as string, 'authorised', intent.amount);
+    const auth = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    await processWebhook(store, provider, auth.raw, auth.headers, NOW);
+    const wrongAmount = Object.assign(Object.create(provider), { capture: async () => undefined });
+    provider.setState(intent.providerRef as string, 'captured', { amountMinor: intent.amount.amountMinor + 1, currency: 'NGN' } as never);
+    const out = await captureAfterFulfilment(store, FUL, wrongAmount, intent.id, 'verified', intent.amount.amountMinor, 'NGN', NOW);
+    assert.equal(out.status, 'review_required');
+    assert.notEqual(store.getIntent(intent.id)?.status, 'captured');
+  });
+
+  test('every webhook attempt is recorded with the provider event id, event name, time and result', async () => {
+    const { store, provider, intent } = await started();
+    // The provider's own status is the authority. The customer has authorised the payment at the provider.
+    provider.setState(intent.providerRef as string, 'authorised', intent.amount);
+    const hook = signedWebhook(provider, { event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+    const eventId = (JSON.parse(hook.raw) as { id: string }).id;
+    await processWebhook(store, provider, hook.raw, hook.headers, NOW);
+    const entry = store.audit().find((e) => e.detail.includes(`event ${eventId}`));
+    assert.ok(entry, 'the provider event id is recorded');
+    assert.ok(entry.detail.includes('authorised'), 'the event name is recorded');
+    assert.equal(entry.at, NOW);
+  });
+
+  test('a replayed event with the same id is a duplicate, even when its body differs', async () => {
+    const { store, provider, intent } = await started();
+    // The provider's own status is the authority. The customer has authorised the payment at the provider.
+    provider.setState(intent.providerRef as string, 'authorised', intent.amount);
+    const first = { id: 'evt-replay-1', event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' };
+    const raw1 = JSON.stringify(first);
+    assert.equal((await processWebhook(store, provider, raw1, { [FIXTURE_WEBHOOK_HEADER]: provider.sign(raw1) }, NOW)).status, 'applied');
+    const raw2 = JSON.stringify({ ...first, state: 'failed', event: 'failed' });
+    const out = await processWebhook(store, provider, raw2, { [FIXTURE_WEBHOOK_HEADER]: provider.sign(raw2) }, NOW);
+    assert.equal(out.status, 'duplicate');
+    assert.equal(store.getIntent(intent.id)?.status, 'authorised');
   });
 });

@@ -1,7 +1,10 @@
-// Supplier order and ticket fulfilment. Order of operations, from the approved policy:
-//   authorise payment -> revalidate fare and hold -> create supplier order -> pay the airline
-//   -> read documents back from the supplier -> capture the customer's payment ONLY when
-//   every seat-occupying passenger has a supplier-issued document.
+// Supplier order and ticket fulfilment, under the Phase 19.0 decision record (docs/24).
+//   authorise payment -> revalidate fare and hold -> partner order -> partner issues tickets
+//   -> GO verifies the tickets -> capture the customer's payment -> confirm. Partner remittance is tracked separately and does not gate confirmation.
+//
+// GO never pays a supplier for ticket issuance. If a supplier says payment is due from GO, the booking
+// is blocked and nothing is paid. Ticket verification and partner remittance are not built yet (Phase 19.x), so
+// no booking in this module reaches 'captured' or 'confirmed' from supplier documents alone.
 //
 // Rules that hold throughout:
 //   - Every supplier write records a 'sent' operation first. A 'sent' operation with no result
@@ -9,7 +12,8 @@
 //   - An unknown outcome locks the booking (order_unknown or ticketing_unknown). A person must
 //     reconcile it with the supplier.
 //   - A definitive failure before an order exists releases the customer's authorisation.
-//   - Confirmed and ticketed are set only from supplier documents, never from our own belief.
+//   - 'tickets_issued' is set only from supplier documents. 'verified' is set only by GO's own check of those
+//     documents. 'confirmed' is set only after verification and capture. Nothing is inferred.
 
 import type { FlightOrderOperations, FlightSupplier, HoldPassenger, OrderSnapshot, TicketDocument } from '../../flights/src/supplier.ts';
 import { SupplierUnavailableError } from '../../flights/src/supplier.ts';
@@ -43,11 +47,12 @@ export function seatPassengerIndexes(passengers: readonly HoldPassenger[]): numb
 // Derives the fulfilment status from what the supplier says. Pure function: no inference.
 export function statusFromSnapshot(snapshot: OrderSnapshot, passengers: readonly HoldPassenger[]): FulfilmentStatus {
   if (snapshot.cancelled) return 'cancellation_pending';
-  if (snapshot.awaitingPayment) return 'order_pending';
+  // Awaiting payment from GO is not a state GO may act on. The booking stays at partner_ordered.
+  if (snapshot.awaitingPayment) return 'partner_ordered';
   const seats = seatPassengerIndexes(passengers);
   const covered = new Set(snapshot.documents.map((d) => d.passengerIndex));
   const coveredSeats = seats.filter((index) => covered.has(index));
-  if (seats.length > 0 && coveredSeats.length === seats.length) return 'ticketed';
+  if (seats.length > 0 && coveredSeats.length === seats.length) return 'tickets_issued';
   if (coveredSeats.length > 0) return 'partially_fulfilled';
   return 'ticketing_pending';
 }
@@ -87,7 +92,7 @@ export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: 
     });
   }
   if (prior?.state === 'done' && prior.orderId) {
-    return payAndRead(deps, deps.store.patch(bookingId, { orderId: prior.orderId }), nowUtc);
+    return readOrder(deps, deps.store.patch(bookingId, { orderId: prior.orderId }), nowUtc);
   }
 
   if (!deps.supplier.createOrder || !deps.supplier.priceOffer) {
@@ -124,11 +129,11 @@ export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: 
       bookingReference: created.snapshot.bookingReference,
       documents: snapshotDocuments(created.snapshot),
     });
-    deps.store.transition(bookingId, 'order_pending', 'order_created', nowUtc, {
+    deps.store.transition(bookingId, 'partner_ordered', 'order_created', nowUtc, {
       orderId: withOrder.orderId,
       bookingReference: withOrder.bookingReference,
     });
-    return payAndRead(deps, deps.store.get(bookingId) as FulfilmentRecord, nowUtc);
+    return readOrder(deps, deps.store.get(bookingId) as FulfilmentRecord, nowUtc);
   } catch (error) {
     if (error instanceof SupplierUnavailableError && (error.reason === 'timeout' || error.reason === 'provider_error')) {
       // The order may exist. Do not release, do not retry. Lock for reconciliation.
@@ -145,8 +150,9 @@ export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: 
   }
 }
 
-// Step 2: pay the airline if the supplier says payment is still due, then read the documents back.
-async function payAndRead(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: string): Promise<FulfilmentRecord> {
+// Step 2: read the order back from the supplier. GO does not pay the supplier. If the supplier says payment
+// is due from GO, the booking is blocked and nothing is paid (Phase 19.0, D3).
+async function readOrder(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: string): Promise<FulfilmentRecord> {
   const orderId = rec.orderId as string;
   let snapshot: OrderSnapshot;
   try {
@@ -155,33 +161,9 @@ async function payAndRead(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: s
     return rec; // read failed: keep the status and try again later. Nothing is assumed.
   }
   if (snapshot.awaitingPayment) {
-    const payKey = `booking:${rec.bookingId}:supplier_ticket:1`;
-    if (deps.store.operation(payKey)) {
-      // Payment was already sent. Do not pay again; read the state the supplier reports.
-      return finishFromSnapshot(deps, rec, snapshot, nowUtc);
-    }
-    deps.store.recordOperation({ key: payKey, state: 'sent', orderId });
-    try {
-      // The airline is paid its own price in its own currency (the supplier price), never the
-      // customer's total, which includes GO's service fee and is in the display currency.
-      snapshot = await deps.supplier.payOrder!(orderId, rec.offer.supplierPrice.amountMinor, rec.offer.supplierPrice.currency, payKey);
-      deps.store.recordOperation({ key: payKey, state: 'done', orderId });
-    } catch (error) {
-      if (error instanceof SupplierUnavailableError && (error.reason === 'timeout' || error.reason === 'provider_error')) {
-        return deps.store.transition(rec.bookingId, 'ticketing_unknown', 'payment_outcome_unknown', nowUtc, {
-          lockedReason: 'The airline payment request had no clear answer. Check the order before any retry.',
-        });
-      }
-      if (error instanceof SupplierUnavailableError && (error.reason === 'price_changed' || error.reason === 'schedule_changed')) {
-        // Nothing has been paid. Cancel the unpaid order, then release the customer's authorisation.
-        await cancelUnpaidOrder(deps, rec, nowUtc);
-        await release(deps, rec, nowUtc);
-        return deps.store.transition(rec.bookingId, 'failed', `pay_refused_${error.reason}`, nowUtc, {
-          blockedReason: 'The airline changed the price or schedule. Nothing was paid.',
-        });
-      }
-      throw error;
-    }
+    return deps.store.patch(rec.bookingId, {
+      blockedReason: 'The supplier asks GO to pay for ticket issuance. GO does not fund supplier tickets, so nothing was paid (docs/24, D3).',
+    });
   }
   return finishFromSnapshot(deps, rec, snapshot, nowUtc);
 }
@@ -200,24 +182,25 @@ function finishFromSnapshot(deps: FulfilmentDeps, rec: FulfilmentRecord, snapsho
 export async function pollTicketing(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
   authorise(actor, 'fulfilment.poll');
   const rec = requireRecord(deps, bookingId);
-  if (!['order_pending', 'ticketing_pending', 'ticketing_unknown', 'partially_fulfilled'].includes(rec.status) || !rec.orderId) return rec;
+  if (!['partner_ordered', 'ticketing_pending', 'ticketing_unknown', 'partially_fulfilled'].includes(rec.status) || !rec.orderId) return rec;
   if (rec.status === 'ticketing_unknown') {
-    // Clear the lock only when the supplier shows the payment reached it.
+    // Clear the lock only when the supplier reports the order without a pending payment from GO.
     const snapshot = await deps.supplier.getOrder!(rec.orderId);
     if (!snapshot.awaitingPayment) return finishFromSnapshot(deps, rec, snapshot, nowUtc);
     return rec;
   }
-  return payAndRead(deps, rec, nowUtc);
+  return readOrder(deps, rec, nowUtc);
 }
 
-// Capture only after confirmed fulfilment. Every condition is checked again by the payments module.
-export async function captureIfTicketed(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
+// Capture only after GO has verified the tickets. Supplier-reported documents are not enough.
+// Every condition is checked again by the payments module.
+export async function captureIfVerified(deps: FulfilmentDeps, actor: Actor, bookingId: string, nowUtc: string): Promise<FulfilmentRecord> {
   authorise(actor, 'payment.capture');
   const rec = requireRecord(deps, bookingId);
-  if (rec.status !== 'ticketed') return rec;
-  const result = await captureAfterFulfilment(deps.payStore, SERVICE, deps.payments, rec.intentId, 'confirmed', rec.totalMinor, rec.currency as 'NGN', nowUtc);
+  if (rec.status !== 'verified') return rec;
+  const result = await captureAfterFulfilment(deps.payStore, SERVICE, deps.payments, rec.intentId, 'verified', rec.totalMinor, rec.currency as 'NGN', nowUtc);
   if (result.status === 'captured') {
-    return deps.store.transition(bookingId, 'confirmed', 'payment_captured_after_tickets', nowUtc);
+    return deps.store.transition(bookingId, 'captured', 'payment_captured_after_verification', nowUtc);
   }
   const reason = result.status === 'blocked' ? result.reasons.join(' ') : result.reason;
   return deps.store.patch(bookingId, { blockedReason: reason });
@@ -232,7 +215,7 @@ export async function cancelBooking(deps: FulfilmentDeps, actor: Actor, bookingI
   if (deps.supplier.mode === 'production' && deps.productionEnabled !== true) {
     return deps.store.patch(bookingId, { blockedReason: 'Production cancellation is disabled.' });
   }
-  if (!['order_pending', 'ticketing_pending', 'partially_fulfilled', 'ticketed', 'confirmed'].includes(rec.status) || !rec.orderId) {
+  if (!['partner_ordered', 'ticketing_pending', 'partially_fulfilled', 'tickets_issued', 'verified', 'captured', 'confirmed'].includes(rec.status) || !rec.orderId) {
     throw new RangeError(`Cannot cancel a booking in ${rec.status}`);
   }
   const pending = deps.store.transition(bookingId, 'cancellation_pending', 'cancellation_requested', nowUtc);
@@ -256,19 +239,6 @@ export async function cancelBooking(deps: FulfilmentDeps, actor: Actor, bookingI
   }
   await release(deps, cancelled, nowUtc);
   return cancelled;
-}
-
-async function cancelUnpaidOrder(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: string): Promise<void> {
-  if (!deps.supplier.cancelOrder || !rec.orderId) return;
-  const key = `booking:${rec.bookingId}:supplier_cancel:1`;
-  deps.store.recordOperation({ key, state: 'sent', orderId: rec.orderId });
-  try {
-    await deps.supplier.cancelOrder(rec.orderId, key);
-    deps.store.recordOperation({ key, state: 'done', orderId: rec.orderId });
-  } catch {
-    // Left as 'sent'. The unpaid order must be checked by a person.
-  }
-  void nowUtc;
 }
 
 async function release(deps: FulfilmentDeps, rec: FulfilmentRecord, nowUtc: string): Promise<void> {

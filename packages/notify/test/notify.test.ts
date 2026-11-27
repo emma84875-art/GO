@@ -173,7 +173,7 @@ describe('rendering and escaping', () => {
 
 describe('ticket and itinerary privacy', () => {
   test('ticket and itinerary emails never contain ticket numbers, passenger names or dates of birth', () => {
-    const ticketed = record('ticketed', { documents: true, withReturn: true });
+    const ticketed = record('verified', { documents: true, withReturn: true });
     const ticket = must(ticketIssuedRequest(ticketed, USER, NOW));
     const itin = must(itineraryRequest(ticketed, USER, NOW));
     const ticketOut = renderTemplate('ticket_issued', ticket.data as never, CTX);
@@ -189,7 +189,7 @@ describe('ticket and itinerary privacy', () => {
   });
 
   test('itinerary times are shown in each airport\'s own time zone', () => {
-    const itin = must(itineraryRequest(record('ticketed', { documents: true }), USER, NOW));
+    const itin = must(itineraryRequest(record('verified', { documents: true }), USER, NOW));
     const out = renderTemplate('itinerary', itin.data as never, CTX);
     assert.ok(out.text.includes('(Africa/Lagos)'));
     assert.ok(out.text.includes('(Europe/London)'));
@@ -197,7 +197,7 @@ describe('ticket and itinerary privacy', () => {
   });
 
   test('a return leg appears when the booking has one', () => {
-    const itin = must(itineraryRequest(record('ticketed', { documents: true, withReturn: true }), USER, NOW));
+    const itin = must(itineraryRequest(record('verified', { documents: true, withReturn: true }), USER, NOW));
     const out = renderTemplate('itinerary', itin.data as never, CTX);
     assert.ok(out.text.includes('Return BA74'));
   });
@@ -205,30 +205,30 @@ describe('ticket and itinerary privacy', () => {
 
 describe('verified system states', () => {
   test('a ticket email is refused while the supplier has not issued tickets', () => {
-    for (const status of ['held', 'authorised', 'order_pending', 'ticketing_pending', 'order_unknown', 'ticketing_unknown'] as const) {
+    for (const status of ['quoted', 'authorised', 'partner_ordered', 'ticketing_pending', 'order_unknown', 'ticketing_unknown'] as const) {
       const r = ticketIssuedRequest(record(status, { documents: true }), USER, NOW);
       assert.equal(r.ok, false, `${status} must not send a ticket email`);
     }
   });
 
   test('a ticket email is refused when the status says ticketed but no supplier document exists', () => {
-    const r = ticketIssuedRequest(record('ticketed', { documents: false }), USER, NOW);
+    const r = ticketIssuedRequest(record('verified', { documents: false }), USER, NOW);
     assert.deepEqual(r, { ok: false, reason: 'no_supplier_documents' });
-    assert.equal(ticketsVerified(record('ticketed', { documents: false })).ok, false);
+    assert.equal(ticketsVerified(record('verified', { documents: false })).ok, false);
   });
 
   test('a ticket email is sent once tickets are issued and documents exist', () => {
-    const r = ticketIssuedRequest(record('ticketed', { documents: true }), USER, NOW);
+    const r = ticketIssuedRequest(record('verified', { documents: true }), USER, NOW);
     assert.equal(r.ok, true);
   });
 
   test('an itinerary is refused before tickets are issued', () => {
-    assert.equal(itineraryRequest(record('order_pending'), USER, NOW).ok, false);
+    assert.equal(itineraryRequest(record('partner_ordered'), USER, NOW).ok, false);
     assert.equal(itineraryRequest(record('partially_fulfilled', { documents: true }), USER, NOW).ok, false);
   });
 
   test('a payment-confirmed email is refused unless the payment is captured', () => {
-    const r = record('ticketed', { documents: true });
+    const r = record('verified', { documents: true });
     assert.equal(paymentConfirmedRequest('intent-B-1', 'authorised', r, USER, NOW).ok, false);
     assert.equal(paymentConfirmedRequest('intent-B-1', 'released', r, USER, NOW).ok, false);
     assert.equal(paymentConfirmedRequest('intent-B-1', 'captured', r, USER, NOW).ok, true);
@@ -249,20 +249,20 @@ describe('verified system states', () => {
   });
 
   test('a cancellation email is refused for a booking that is not cancelled', () => {
-    assert.equal(cancellationRequest(record('ticketed', { documents: true }), USER, NOW).ok, false);
+    assert.equal(cancellationRequest(record('verified', { documents: true }), USER, NOW).ok, false);
     assert.equal(cancellationRequest(record('cancelled'), USER, NOW).ok, true);
   });
 
   test('intermediate booking statuses are optional, and final statuses are always sent', () => {
-    assert.equal(must(bookingStatusRequest(record('order_pending'), USER, NOW)).preferenceKey, 'bookingProgress');
-    assert.equal(must(bookingStatusRequest(record('ticketed', { documents: true }), USER, NOW)).preferenceKey, null);
+    assert.equal(must(bookingStatusRequest(record('partner_ordered'), USER, NOW)).preferenceKey, 'bookingProgress');
+    assert.equal(must(bookingStatusRequest(record('verified', { documents: true }), USER, NOW)).preferenceKey, null);
   });
 });
 
 describe('duplicate events and idempotency', () => {
   test('the same request enqueued twice is a duplicate, with one job', () => {
     const q = new NotificationQueue();
-    const req = must(bookingReceivedRequest(record('held'), USER, NOW));
+    const req = must(bookingReceivedRequest(record('quoted'), USER, NOW));
     const a = q.enqueue(req, DEFAULT_PREFERENCES, NOW);
     const b = q.enqueue(req, DEFAULT_PREFERENCES, NOW);
     assert.equal(a.status, 'queued');
@@ -272,8 +272,8 @@ describe('duplicate events and idempotency', () => {
 
   test('a repeated booking status does not send again, but a new status does', () => {
     const q = new NotificationQueue();
-    const first = must(bookingStatusRequest(record('order_pending'), USER, NOW));
-    const again = must(bookingStatusRequest(record('order_pending'), USER, NOW));
+    const first = must(bookingStatusRequest(record('partner_ordered'), USER, NOW));
+    const again = must(bookingStatusRequest(record('partner_ordered'), USER, NOW));
     const next = must(bookingStatusRequest(record('ticketing_pending'), USER, NOW));
     assert.equal(q.enqueue(first, DEFAULT_PREFERENCES, NOW).status, 'queued');
     assert.equal(q.enqueue(again, DEFAULT_PREFERENCES, NOW).status, 'duplicate');
@@ -283,7 +283,7 @@ describe('duplicate events and idempotency', () => {
   test('a ticket email is delivered once even when the queue runs repeatedly', async () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
-    q.enqueue(must(ticketIssuedRequest(record('ticketed', { documents: true }), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    q.enqueue(must(ticketIssuedRequest(record('verified', { documents: true }), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     await q.processDue(NOW, deps(t));
     await q.processDue(NOW, deps(t));
@@ -294,7 +294,7 @@ describe('duplicate events and idempotency', () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
     t.script = [{ state: 'failed', code: 'timeout', retryable: true }];
-    q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     await q.processDue('2026-11-15T10:02:00Z', deps(t));
     assert.equal(t.attempts.length, 2);
@@ -308,7 +308,7 @@ describe('delivery, retries and failure handling', () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
     t.script = [{ state: 'failed', code: 'rate_limited', retryable: true }];
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     const report = await q.processDue(NOW, deps(t));
     assert.equal(report.retried, 1);
     const job = q.job(jobId);
@@ -323,7 +323,7 @@ describe('delivery, retries and failure handling', () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
     t.script = [{ state: 'failed', code: 'timeout', retryable: true }];
-    q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     const early = await q.processDue('2026-11-15T10:00:30Z', deps(t));
     assert.equal(early.sent + early.retried, 0);
@@ -337,7 +337,7 @@ describe('delivery, retries and failure handling', () => {
       { state: 'failed', code: 'e', retryable: true },
       { state: 'failed', code: 'e', retryable: true },
     ];
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     const afterFirst = q.job(jobId)?.nextAttemptAt ?? '';
     await q.processDue(afterFirst, deps(t));
@@ -352,7 +352,7 @@ describe('delivery, retries and failure handling', () => {
       { state: 'failed', code: 'e', retryable: true },
       { state: 'failed', code: 'e', retryable: true },
     ];
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     await q.processDue('2026-11-15T10:00:05Z', deps(t));
     assert.equal(q.job(jobId)?.state, 'dead');
@@ -365,7 +365,7 @@ describe('delivery, retries and failure handling', () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
     t.script = [{ state: 'failed', code: 'hard_bounce', retryable: false }];
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     const report = await q.processDue(NOW, deps(t));
     assert.equal(report.failed, 1);
     assert.equal(q.job(jobId)?.state, 'failed');
@@ -381,7 +381,7 @@ describe('delivery, retries and failure handling', () => {
         throw new Error('smtp auth failed for ada@example.test with password hunter2');
       },
     };
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(thrower));
     const job = q.job(jobId);
     assert.equal(job?.state, 'retry_scheduled');
@@ -393,7 +393,7 @@ describe('delivery, retries and failure handling', () => {
 
   test('an unconfigured transport sends nothing, keeps the job queued, and does not count an attempt', async () => {
     const q = new NotificationQueue();
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     const report = await q.processDue(NOW, deps(new UnconfiguredTransport()));
     assert.equal(report.notConfigured, 1);
     const job = q.job(jobId);
@@ -406,7 +406,7 @@ describe('delivery, retries and failure handling', () => {
   test('a customer with no address is a permanent failure, with no send attempt', async () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t, null));
     assert.equal(q.job(jobId)?.lastErrorCode, 'no_address');
     assert.equal(q.job(jobId)?.state, 'failed');
@@ -416,7 +416,7 @@ describe('delivery, retries and failure handling', () => {
   test('a render error is a permanent failure with a code, not a crash', async () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
-    const bad = must(bookingReceivedRequest(record('held', { reference: 'bad!!' }), USER, NOW));
+    const bad = must(bookingReceivedRequest(record('quoted', { reference: 'bad!!' }), USER, NOW));
     const { jobId } = q.enqueue(bad, DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     assert.equal(q.job(jobId)?.lastErrorCode, 'render_error');
@@ -426,7 +426,7 @@ describe('delivery, retries and failure handling', () => {
   test('an address lookup error is transient and does not send', async () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, { transport: t, addressFor: async () => { throw new Error('db down'); }, render: makeRenderer(CTX) });
     assert.equal(q.job(jobId)?.state, 'retry_scheduled');
     assert.equal(q.job(jobId)?.lastErrorCode, 'address_error');
@@ -436,7 +436,7 @@ describe('delivery, retries and failure handling', () => {
   test('a stale claim from a crash is released for retry, and the provider delivers only once', async () => {
     const q = new NotificationQueue({ staleClaimMs: 60_000 });
     const hanging: Transport = { name: 'hang', send: () => new Promise(() => {}) };
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     void q.processDue(NOW, deps(hanging)); // the send never returns: a crash mid-send
     await new Promise((r) => setImmediate(r));
     assert.equal(q.job(jobId)?.state, 'sending');
@@ -451,7 +451,7 @@ describe('delivery, retries and failure handling', () => {
   test('a successful send records the provider ID and clears the private data', async () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
-    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    const { jobId } = q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     const job = q.job(jobId);
     assert.equal(job?.state, 'sent');
@@ -466,7 +466,7 @@ describe('daily send cap and batching', () => {
     const q = new NotificationQueue({ dailySendCap: 2 });
     const t = new MemoryTransport();
     for (let i = 1; i <= 3; i += 1) {
-      q.enqueue(must(bookingReceivedRequest(record('held', { id: `B-${i}` }), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+      q.enqueue(must(bookingReceivedRequest(record('quoted', { id: `B-${i}` }), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     }
     const today = await q.processDue(NOW, deps(t));
     assert.equal(today.sent, 2);
@@ -481,7 +481,7 @@ describe('daily send cap and batching', () => {
   test('a batch never processes more jobs than the batch size', async () => {
     const q = new NotificationQueue({ batchSize: 2 });
     const t = new MemoryTransport();
-    for (let i = 1; i <= 4; i += 1) q.enqueue(must(bookingReceivedRequest(record('held', { id: `B-${i}` }), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    for (let i = 1; i <= 4; i += 1) q.enqueue(must(bookingReceivedRequest(record('quoted', { id: `B-${i}` }), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     const report = await q.processDue(NOW, deps(t));
     assert.equal(report.sent, 2);
   });
@@ -499,14 +499,14 @@ describe('preferences', () => {
   test('intermediate booking updates are suppressed when booking progress is off, but final updates still send', () => {
     const q = new NotificationQueue();
     const off: Preferences = { bookingProgress: false, supportReplies: true };
-    assert.equal(q.enqueue(must(bookingStatusRequest(record('order_pending'), USER, NOW)), off, NOW).status, 'suppressed');
-    assert.equal(q.enqueue(must(bookingStatusRequest(record('ticketed', { documents: true }), USER, NOW)), off, NOW).status, 'queued');
+    assert.equal(q.enqueue(must(bookingStatusRequest(record('partner_ordered'), USER, NOW)), off, NOW).status, 'suppressed');
+    assert.equal(q.enqueue(must(bookingStatusRequest(record('verified', { documents: true }), USER, NOW)), off, NOW).status, 'queued');
   });
 
   test('security, account, payment, ticket and refund messages cannot be switched off', () => {
     const q = new NotificationQueue();
     const none = prefsAll(false);
-    const r = record('ticketed', { documents: true });
+    const r = record('verified', { documents: true });
     const requests: NotificationRequest[] = [
       must(authRequest('verify', USER, 'n1', NOW)),
       must(authRequest('reset', USER, 'n2', NOW)),
@@ -562,7 +562,7 @@ describe('rate limits and security', () => {
     const q = new NotificationQueue();
     const t = new MemoryTransport();
     t.script = [{ state: 'failed', code: 'timeout', retryable: true }];
-    q.enqueue(must(bookingReceivedRequest(record('held'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
+    q.enqueue(must(bookingReceivedRequest(record('quoted'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     q.enqueue(must(paymentFailedRequest('intent-B-1', 'failed', record('expired'), USER, NOW)), DEFAULT_PREFERENCES, NOW);
     await q.processDue(NOW, deps(t));
     const stored = JSON.stringify([q.allJobs(), q.failureLog]);

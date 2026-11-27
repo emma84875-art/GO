@@ -63,7 +63,7 @@ export function securityAlertRequest(userId: string, event: TemplateDataMap['sec
 
 // --- booking ----------------------------------------------------------------------------------
 
-const INTERMEDIATE: readonly FulfilmentStatus[] = ['held', 'authorised', 'order_pending', 'ticketing_pending'];
+const INTERMEDIATE: readonly FulfilmentStatus[] = ['quoted', 'authorised', 'partner_ordered', 'ticketing_pending'];
 
 export function bookingReceivedRequest(record: FulfilmentRecord, userId: string, nowUtc: string): BuildResult {
   return build('booking_received', 'booking', userId, `booking_received:${record.bookingId}`, null, { bookingReference: record.bookingReference }, nowUtc);

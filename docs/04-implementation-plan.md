@@ -410,3 +410,9 @@ Owner approved the decision record and resolved D3 as option (c). This supersede
 - Duffel balance funding (Route A in `14`) is withdrawn. Duffel is not assumed able to fund or issue tickets for GO.
 - Phase 19.1 is not approved. Its gating dependency is now E3 (partner identification and approval).
 - Architecture changes required in later phases are listed in `24` section 6.
+
+### 16.7 Phase 19.1 status (26 Nov 2026)
+
+Implemented locally and verified, not committed. The single booking and fulfilment state model (20 states), the database schema and migration, the rollback, and the tests are described in `25-phase-19-1-schema-risks.md`. Confirmation needs only independent ticket verification and customer capture. Partner remittance is a separate record with its own statuses (not required, pending, paid, failed, under review). It never gates a booking. Only an administrator may mark it paid or not required; each remittance cites its agreement; every change is audited; and the model holds one record per booking (instalments are not supported, see `25` section 5B). No supplier order integration, booking endpoint, worker, ticket verification or remittance workflow is built. Phase 19.2 is not started and awaits owner approval.
+
+Implemented locally and verified, not committed. The single booking and fulfilment state model, the database schema and migration, the rollback, and the updated tests are described in `25-phase-19-1-schema-risks.md`. No supplier order integration, booking endpoint, worker, ticket verification or partner remittance is built. The owner's correction is applied: customer tickets are shown only after GO verification; "settled" is split into customer capture, provider settlement (does not gate confirmation) and partner remittance (gates confirmation); see `24` section 3A and `25`. Phase 19.2 is not started and awaits owner approval.

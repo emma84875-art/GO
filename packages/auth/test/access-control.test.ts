@@ -78,8 +78,16 @@ describe('permission matrix (deny by default)', () => {
     }
   });
 
+  test('finance holds remittance access only: no booking, passenger, ticket or refund permission', () => {
+    assert.deepEqual(permissionsFor('finance'), ['remittance.manage']);
+    for (const role of ['support', 'operations', 'customer'] as const) {
+      assert.ok(!permissionsFor(role).includes('remittance.manage'), `${role} must not manage remittances`);
+    }
+    assert.ok(permissionsFor('admin').includes('remittance.manage'));
+  });
+
   test('every role has a distinct set and admin is the only role with role.change', () => {
-    const withRoleChange = (['customer', 'support', 'operations', 'admin'] as const).filter((r) =>
+    const withRoleChange = (['customer', 'support', 'operations', 'finance', 'admin'] as const).filter((r) =>
       permissionsFor(r).includes('role.change'),
     );
     assert.deepEqual(withRoleChange, ['admin']);
@@ -90,7 +98,7 @@ describe('permission matrix (deny by default)', () => {
   });
 
   test('an unknown role has no permissions', () => {
-    assert.deepEqual(permissionsFor('finance' as Role), []);
+    assert.deepEqual(permissionsFor('auditor' as Role), []);
   });
 
   test('a missing actor is always denied', () => {
@@ -209,8 +217,8 @@ describe('request authentication', () => {
     assert.deepEqual(out, { ok: false, reason: 'staff_mfa_not_enrolled' });
   });
 
-  test('operations and admins are also refused without MFA enrolment', async () => {
-    for (const role of ['operations', 'admin'] as const) {
+  test('operations, finance and admins are also refused without MFA enrolment', async () => {
+    for (const role of ['operations', 'finance', 'admin'] as const) {
       const out = await authenticateRequest(token({}, STAFF), CONFIG, POLICY, lookups({ [STAFF]: role }, []), NOW);
       assert.deepEqual(out, { ok: false, reason: 'staff_mfa_not_enrolled' }, role);
     }

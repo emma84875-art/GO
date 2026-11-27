@@ -45,12 +45,13 @@ export class FlutterwavePaymentProvider implements PaymentProvider {
   }
 
   parseWebhook(rawBody: string): ParsedWebhook {
-    const body = JSON.parse(rawBody) as { event?: string; data?: { flw_ref?: string; amount?: number; currency?: string; status?: string } };
+    const body = JSON.parse(rawBody) as { event?: string; data?: { id?: number | string; flw_ref?: string; amount?: number; currency?: string; status?: string } };
     const data = body.data;
-    if (!body.event || !data?.flw_ref || !Number.isSafeInteger(data.amount) || !data.currency) {
+    if (!body.event || data?.id === undefined || !data?.flw_ref || !Number.isSafeInteger(data.amount) || !data.currency) {
       throw new PaymentProviderError('invalid_response', 'Flutterwave webhook is missing fields');
     }
     return {
+      eventId: String(data.id),
       eventName: body.event,
       providerRef: data.flw_ref,
       reportedAmountMinor: data.amount as number,

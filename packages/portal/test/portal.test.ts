@@ -33,8 +33,9 @@ const ALICE_ACTOR: Actor = { userId: ALICE, role: 'customer' };
 const BOB_ACTOR: Actor = { userId: BOB, role: 'customer' };
 
 const ALL_STATUSES: readonly FulfilmentStatus[] = [
-  'held', 'authorised', 'order_pending', 'ticketing_pending', 'ticketed', 'partially_fulfilled', 'confirmed',
-  'order_unknown', 'ticketing_unknown', 'failed', 'expired', 'cancellation_pending', 'cancelled', 'refund_pending', 'refunded',
+  'draft', 'quoted', 'authorised', 'order_unknown', 'partner_ordered', 'ticketing_pending', 'ticketing_unknown',
+  'tickets_issued', 'partially_fulfilled', 'verified', 'verification_failed', 'captured', 'confirmed',
+  'review_required', 'failed', 'expired', 'cancellation_pending', 'cancelled', 'refund_pending', 'refunded',
 ];
 
 function offer(id: string, withReturn = false, past = false): Offer {
@@ -81,12 +82,12 @@ interface Options {
 }
 
 // Builds a booking through the real fulfilment store, so every status move is checked by the
-// legal move table. 'held' is the starting point; path lists the moves that follow.
+// legal move table. 'quoted' is the starting point; path lists the moves that follow.
 function book(options: Options): PortalBooking {
   const store = new FulfilmentStore();
   const passengers = options.passengers ?? [{ type: 'adult' as const, firstName: 'Ada', lastName: 'Okafor', dateOfBirth: '1990-05-14', nationality: 'NG' }];
   store.create({
-    bookingId: options.id, status: 'held', intentId: options.intentId ?? `intent-${options.id}`, offer: offer(`offer-${options.id}`, options.withReturn ?? false, options.past ?? false),
+    bookingId: options.id, status: 'quoted', intentId: options.intentId ?? `intent-${options.id}`, offer: offer(`offer-${options.id}`, options.withReturn ?? false, options.past ?? false),
     passengers, totalMinor: 85_000_000, currency: 'NGN',
     holdExpiresAtUtc: options.holdExpiresAtUtc ?? '2026-11-13T09:30:00Z', orderId: null, bookingReference: null,
     documents: [], lockedReason: null, blockedReason: null,
@@ -109,7 +110,7 @@ function book(options: Options): PortalBooking {
   return { ownerUserId: options.owner, record, history: store.historyFor(options.id) };
 }
 
-const TICKETED_PATH: readonly FulfilmentStatus[] = ['authorised', 'order_pending', 'ticketed'];
+const TICKETED_PATH: readonly FulfilmentStatus[] = ['authorised', 'partner_ordered', 'tickets_issued', 'verified'];
 
 describe('access', () => {
   test('a customer sees only their own bookings in the dashboard', () => {
@@ -171,14 +172,14 @@ describe('customer privacy', () => {
   });
 
   test('ticket numbers are hidden until the supplier has issued them', () => {
-    const pending = book({ id: 'A1', owner: ALICE, path: ['authorised', 'order_pending'] });
+    const pending = book({ id: 'A1', owner: ALICE, path: ['authorised', 'partner_ordered'] });
     assert.deepEqual(customerBooking(ALICE_ACTOR, pending)?.tickets, []);
     const ticketed = book({ id: 'A2', owner: ALICE, path: TICKETED_PATH, documents: [{ passengerIndex: 0, number: '0011234567890' }] });
     assert.deepEqual(customerBooking(ALICE_ACTOR, ticketed)?.tickets, [{ passengerIndex: 0, number: '0011234567890' }]);
   });
 
   test('internal reasons are never shown to the customer', () => {
-    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'order_pending', 'ticketing_pending'], lockedReason: 'INTERNAL-LOCK-TEXT', blockedReason: 'INTERNAL-BLOCK-TEXT' });
+    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'partner_ordered', 'ticketing_pending'], lockedReason: 'INTERNAL-LOCK-TEXT', blockedReason: 'INTERNAL-BLOCK-TEXT' });
     const json = JSON.stringify(customerBooking(ALICE_ACTOR, a1));
     assert.ok(!json.includes('INTERNAL-LOCK-TEXT'));
     assert.ok(!json.includes('INTERNAL-BLOCK-TEXT'));
@@ -243,7 +244,7 @@ describe('status wording', () => {
 
 describe('timelines', () => {
   test('timeline entries are sorted by time, and entries without a time come first and are not invented', () => {
-    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'order_pending'], at: ['2026-11-13T08:10:00Z', '2026-11-13T08:20:00Z'] });
+    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'partner_ordered'], at: ['2026-11-13T08:10:00Z', '2026-11-13T08:20:00Z'] });
     const paymentAudit: AuditEntry[] = [
       { at: '2026-11-13T08:15:00Z', intentId: 'intent-A1', event: 'payment_authorised', from: 'initiated', to: 'authorised', detail: 'Payment authorised by provider.' },
     ];
@@ -254,7 +255,7 @@ describe('timelines', () => {
   });
 
   test('the customer timeline shows status labels only, with no payment entries', () => {
-    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'order_pending'], at: ['2026-11-13T08:10:00Z', '2026-11-13T08:20:00Z'] });
+    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'partner_ordered'], at: ['2026-11-13T08:10:00Z', '2026-11-13T08:20:00Z'] });
     const items = customerTimeline(a1.history);
     assert.ok(items.every((i) => typeof i.label === 'string'));
     assert.ok(items.some((i) => i.label === 'Pending'));
@@ -303,7 +304,7 @@ describe('customer requests', () => {
     assert.equal(result.request.kind, 'cancellation');
     assert.equal(result.request.state, 'open');
     assert.equal(result.audit.action, 'booking.cancellation_requested');
-    assert.equal(ticketed.record.status, 'ticketed', 'a request does not change status');
+    assert.equal(ticketed.record.status, 'verified', 'a request does not change status');
   });
 
   test('support requests are trimmed and limited in length', () => {
@@ -328,7 +329,7 @@ describe('operations watch lists', () => {
 
   test('attention list flags unknown and partial outcomes as high severity', () => {
     const unknown = book({ id: 'U1', owner: ALICE, path: ['authorised', 'order_unknown'], at: [null, '2026-11-13T08:00:00Z'] });
-    const partial = book({ id: 'P1', owner: ALICE, path: ['authorised', 'order_pending', 'partially_fulfilled'] });
+    const partial = book({ id: 'P1', owner: ALICE, path: ['authorised', 'partner_ordered', 'partially_fulfilled'] });
     const items = needsAttention(SUPPORT, [partial, unknown], NOW);
     assert.equal(items[0].severity, 'high');
     assert.ok(items.some((i) => i.bookingId === 'U1' && i.severity === 'high'));
@@ -336,8 +337,8 @@ describe('operations watch lists', () => {
   });
 
   test('in-flight bookings with no change for a long time are flagged as delayed', () => {
-    const stale = book({ id: 'D1', owner: ALICE, path: ['authorised', 'order_pending'], at: ['2026-11-13T07:00:00Z', '2026-11-13T07:05:00Z'] });
-    const fresh = book({ id: 'D2', owner: ALICE, path: ['authorised', 'order_pending'], at: ['2026-11-13T08:50:00Z', '2026-11-13T08:55:00Z'] });
+    const stale = book({ id: 'D1', owner: ALICE, path: ['authorised', 'partner_ordered'], at: ['2026-11-13T07:00:00Z', '2026-11-13T07:05:00Z'] });
+    const fresh = book({ id: 'D2', owner: ALICE, path: ['authorised', 'partner_ordered'], at: ['2026-11-13T08:50:00Z', '2026-11-13T08:55:00Z'] });
     const items = needsAttention(SUPPORT, [stale, fresh], NOW);
     const d1 = items.find((i) => i.bookingId === 'D1');
     assert.ok(d1);
@@ -347,7 +348,7 @@ describe('operations watch lists', () => {
   });
 
   test('an in-flight booking with no recorded change time is flagged, not assumed fresh', () => {
-    const undated = book({ id: 'N1', owner: ALICE, path: ['authorised', 'order_pending'] });
+    const undated = book({ id: 'N1', owner: ALICE, path: ['authorised', 'partner_ordered'] });
     const item = needsAttention(SUPPORT, [undated], NOW)[0];
     assert.ok(item);
     assert.match(item.reasons.join(' '), /No change time is recorded/);
@@ -371,7 +372,7 @@ describe('notifications', () => {
   });
 
   test('customer email never contains passenger names', () => {
-    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'order_pending'] });
+    const a1 = book({ id: 'A1', owner: ALICE, path: ['authorised', 'partner_ordered'] });
     const msg = bookingUpdateMessage(a1, NOW);
     assert.ok(!msg.body.includes('Okafor'));
     assert.ok(!msg.subject.includes('Okafor'));

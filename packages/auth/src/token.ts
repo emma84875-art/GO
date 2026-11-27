@@ -56,7 +56,7 @@ const SUBJECT_ROLE = 'authenticated';
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const ROLES: readonly Role[] = ['customer', 'support', 'operations', 'admin'];
+const ROLES: readonly Role[] = ['customer', 'support', 'operations', 'finance', 'admin'];
 
 // Converts an ISO 8601 UTC instant (must end in Z) to whole epoch seconds.
 function epochSeconds(nowUtc: string): number {

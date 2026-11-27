@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { FixtureOrderSupplier, type OrderKnobs } from '../src/fixture-orders.ts';
 import { FulfilmentStore, type FulfilmentRecord } from '../src/store.ts';
-import { placeOrder, pollTicketing, captureIfTicketed, cancelBooking, type FulfilmentDeps } from '../src/orchestrator.ts';
+import { placeOrder, pollTicketing, captureIfVerified, cancelBooking, type FulfilmentDeps } from '../src/orchestrator.ts';
 import { customerStatus, canMove, move, type FulfilmentStatus } from '../src/status.ts';
 import { customerScreen } from '../src/customer-view.ts';
 import { passengersFor, ticketsFor } from '../src/privacy.ts';
@@ -47,12 +47,12 @@ async function setup(knobs: OrderKnobs = {}, adults = 1, holdExpiresAtUtc = '202
   assert.equal(started.status, 'initiated', JSON.stringify(started));
   const intent = payStore.getIntent(started.intentId)!;
   payments.setState(intent.providerRef!, 'authorised', intent.amount);
-  const raw = JSON.stringify({ event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
+  const raw = JSON.stringify({ id: 'evt-fulfilment-1', event: 'authorised', providerRef: intent.providerRef, amount: intent.amount.amountMinor, currency: 'NGN', state: 'authorised' });
   await processWebhook(payStore, payments, raw, { [FIXTURE_WEBHOOK_HEADER]: payments.sign(raw) }, NOW);
 
   const store = new FulfilmentStore();
   store.create({
-    bookingId: BOOKING, status: 'held', intentId: intent.id, offer, passengers: passengers(adults),
+    bookingId: BOOKING, status: 'quoted', intentId: intent.id, offer, passengers: passengers(adults),
     totalMinor: offer.displayPrice.amountMinor, currency: 'NGN', holdExpiresAtUtc, orderId: null,
     bookingReference: null, documents: [], lockedReason: null, blockedReason: null,
   });
@@ -62,91 +62,103 @@ async function setup(knobs: OrderKnobs = {}, adults = 1, holdExpiresAtUtc = '202
 }
 
 describe('state machine', () => {
-  test("confirmed is reachable only after tickets are issued", () => {
+  test('the approved sequence is the only way to a confirmed booking', () => {
+    assert.equal(canMove('authorised', 'partner_ordered'), true);
+    assert.equal(canMove('partner_ordered', 'tickets_issued'), true);
+    assert.equal(canMove('tickets_issued', 'verified'), true);
+    assert.equal(canMove('verified', 'captured'), true);
+    assert.equal(canMove('captured', 'confirmed'), true, 'confirmation follows capture');
+    assert.equal(canMove('tickets_issued', 'captured'), false, 'no capture before GO verification');
+    assert.equal(canMove('verified', 'confirmed'), false, 'no confirmation without capture');
     assert.equal(canMove('authorised', 'confirmed'), false, 'never straight from authorised');
-    assert.equal(canMove('order_pending', 'confirmed'), false, 'never before tickets are issued');
-    assert.equal(canMove('ticketed', 'confirmed'), true);
   });
 
   test('illegal moves throw and the state does not change', () => {
     assert.throws(() => move('refunded', 'confirmed'), RangeError);
-    assert.throws(() => move('failed', 'ticketed'), RangeError);
+    assert.throws(() => move('failed', 'tickets_issued'), RangeError);
   });
 
-  test('customer copy never says confirmed unless the supplier confirmed', () => {
-    const statuses: FulfilmentStatus[] = ['held', 'authorised', 'order_pending', 'ticketing_pending', 'ticketed', 'partially_fulfilled',
-      'order_unknown', 'ticketing_unknown', 'failed', 'expired', 'cancellation_pending', 'cancelled', 'refund_pending', 'refunded'];
+  test('customer copy never says confirmed unless the booking is confirmed', () => {
+    const statuses: FulfilmentStatus[] = ['quoted', 'authorised', 'partner_ordered', 'ticketing_pending', 'tickets_issued',
+      'partially_fulfilled', 'order_unknown', 'ticketing_unknown', 'verified', 'captured', 'failed', 'expired',
+      'cancellation_pending', 'cancelled', 'refund_pending', 'refunded'];
     for (const s of statuses) {
       assert.notEqual(customerStatus(s).headline, 'Booking confirmed', s);
-      if (s !== "ticketed") assert.equal(customerStatus(s).showTickets, false, `no tickets shown while ${s}`);
     }
     assert.equal(customerStatus('confirmed').headline, 'Booking confirmed');
   });
+
+  test('tickets are shown to the customer only once GO has verified them', () => {
+    assert.equal(customerStatus('tickets_issued').showTickets, false);
+    assert.equal(customerStatus('verified').showTickets, true);
+    assert.equal(customerStatus('confirmed').showTickets, true);
+  });
 });
 
-describe('successful booking (fixture)', () => {
-  test('order, pay the airline, read tickets back, then capture and confirm', async () => {
-    const { deps, store, payStore, intent } = await setup();
+describe('partner-funded issuance (fixture)', () => {
+  test('the partner funds the order: tickets are read back as issued, and GO never pays the supplier', async () => {
+    const { deps, supplier } = await setup();
     const rec = await placeOrder(deps, FUL, BOOKING, NOW);
-    assert.equal(rec.status, 'ticketed');
+    assert.equal(rec.status, 'tickets_issued');
     assert.equal(rec.documents.length, 1);
     assert.match(rec.documents[0].number, /^FX-/, 'fixture ticket numbers are obviously fake');
+    assert.equal(supplier.calls.filter((c) => c === 'pay').length, 0, 'GO never pays a supplier');
+    assert.equal(rec.blockedReason, null);
+  });
 
-    const confirmed = await captureIfTicketed(deps, FUL, BOOKING, NOW);
-    assert.equal(confirmed.status, 'confirmed');
-    assert.equal(payStore.getIntent(intent.id)?.status, 'captured');
-
-    const screen = customerScreen(store.get(BOOKING)!);
-    assert.equal(screen.status.headline, 'Booking confirmed');
-    assert.equal(screen.tickets.length, 1);
-    assert.equal(screen.tickets[0].number.startsWith('FX-'), true);
+  test('GO does not capture until it has verified the tickets, and the customer sees no tickets yet', async () => {
+    const { deps, store, payStore, intent } = await setup();
+    await placeOrder(deps, FUL, BOOKING, NOW);
+    const out = await captureIfVerified(deps, FUL, BOOKING, NOW);
+    assert.equal(out.status, 'tickets_issued', 'capture is refused before verification');
+    assert.equal(payStore.getIntent(intent.id)?.status, 'authorised');
+    assert.equal(customerScreen(store.get(BOOKING)!).tickets.length, 0);
   });
 
   test('history records every change in order', async () => {
     const { deps, store } = await setup();
     await placeOrder(deps, FUL, BOOKING, NOW);
-    await captureIfTicketed(deps, FUL, BOOKING, NOW);
     const steps = store.historyFor(BOOKING).map((h) => h.to);
-    assert.deepEqual(steps, ['held', 'authorised', 'order_pending', 'ticketed', 'confirmed']);
+    assert.deepEqual(steps, ['quoted', 'authorised', 'partner_ordered', 'tickets_issued']);
   });
 });
 
 describe('delayed ticket issuance', () => {
-  test('no capture and no confirmation while tickets are not yet issued', async () => {
+  test('no capture while tickets are not yet issued, and no tickets shown', async () => {
     const { deps, store, payStore, intent } = await setup({ pollsBeforeTicketing: 2 });
     let rec = await placeOrder(deps, FUL, BOOKING, NOW);
     assert.equal(rec.status, 'ticketing_pending');
 
-    const early = await captureIfTicketed(deps, FUL, BOOKING, NOW);
+    const early = await captureIfVerified(deps, FUL, BOOKING, NOW);
     assert.equal(early.status, 'ticketing_pending', 'capture is not attempted before tickets');
     assert.equal(payStore.getIntent(intent.id)?.status, 'authorised');
     assert.equal(customerScreen(store.get(BOOKING)!).tickets.length, 0);
 
     rec = await pollTicketing(deps, FUL, BOOKING, NOW);
     rec = await pollTicketing(deps, FUL, BOOKING, NOW);
-    assert.equal(rec.status, 'ticketed');
-    assert.equal((await captureIfTicketed(deps, FUL, BOOKING, NOW)).status, 'confirmed');
+    assert.equal(rec.status, 'tickets_issued');
+    assert.equal((await captureIfVerified(deps, FUL, BOOKING, NOW)).status, 'tickets_issued', 'still not verified by GO');
   });
 });
 
 describe('duplicate requests', () => {
-  test('repeating the order step never creates or pays for a second order', async () => {
+  test('repeating the order step never creates a second order', async () => {
     const { deps, supplier } = await setup();
     await placeOrder(deps, FUL, BOOKING, NOW);
     await placeOrder(deps, FUL, BOOKING, NOW);
     await placeOrder(deps, FUL, BOOKING, NOW);
     assert.equal(supplier.orderCount(), 1);
     assert.equal(supplier.calls.filter((c) => c === 'create').length, 1);
-    assert.equal(supplier.calls.filter((c) => c === 'pay').length, 1);
   });
 
-  test('a repeated capture never captures twice', async () => {
+  test('a repeated capture request does nothing while the tickets are unverified', async () => {
     const { deps, payStore, intent } = await setup();
     await placeOrder(deps, FUL, BOOKING, NOW);
-    await captureIfTicketed(deps, FUL, BOOKING, NOW);
-    const again = await captureIfTicketed(deps, FUL, BOOKING, NOW);
-    assert.equal(again.status, 'confirmed');
-    assert.equal(payStore.getIntent(intent.id)?.capturedMinor, intent.amount.amountMinor);
+    await captureIfVerified(deps, FUL, BOOKING, NOW);
+    const again = await captureIfVerified(deps, FUL, BOOKING, NOW);
+    assert.equal(again.status, 'tickets_issued');
+    assert.equal(payStore.getIntent(intent.id)?.status, 'authorised');
+    assert.equal(payStore.getIntent(intent.id)?.capturedMinor, 0);
   });
 });
 
@@ -167,25 +179,24 @@ describe('supplier timeouts', () => {
     assert.equal(supplier.calls.filter((c) => c === 'create').length, 1);
   });
 
-  test('a lost reply after payment locks ticketing until the supplier confirms the payment', async () => {
-    const { deps, supplier } = await setup({ timeoutOnPayAfterPaying: true });
+  test('a supplier that asks GO to pay for tickets is refused: the booking is blocked and nothing is paid', async () => {
+    const { deps, supplier, payStore, intent } = await setup({ supplierDemandsGoPayment: true });
     const rec = await placeOrder(deps, FUL, BOOKING, NOW);
-    assert.equal(rec.status, 'ticketing_unknown');
-    const polled = await pollTicketing(deps, FUL, BOOKING, NOW);
-    assert.equal(polled.status, 'ticketed', 'supplier shows payment reached it, so tickets are read back');
-    assert.equal(supplier.calls.filter((c) => c === 'pay').length, 1, 'never paid twice');
+    assert.equal(rec.status, 'partner_ordered');
+    assert.match(rec.blockedReason ?? '', /GO does not fund supplier tickets/);
+    assert.equal(supplier.calls.filter((c) => c === 'pay').length, 0, 'GO never pays a supplier');
+    assert.equal(payStore.getIntent(intent.id)?.status, 'authorised', 'the customer authorisation is kept, not captured or released');
   });
 });
 
 describe('price changes and expiry before an order', () => {
   test('a fare change before the order fails the booking and releases the authorisation', async () => {
-    const { deps, supplier, payStore, intent, offer } = await setup();
+    const { deps, supplier, payStore, intent } = await setup();
     const base = supplier.priceOffer.bind(supplier);
     supplier.priceOffer = async (o, now) => {
       const fresh = await base(o, now);
       return { ...fresh, supplierPrice: { amountMinor: fresh.supplierPrice.amountMinor + 1, currency: 'USD' } };
     };
-    void offer;
     const rec = await placeOrder(deps, FUL, BOOKING, NOW);
     assert.equal(rec.status, 'failed');
     assert.equal(payStore.getIntent(intent.id)?.status, 'released');
@@ -199,15 +210,6 @@ describe('price changes and expiry before an order', () => {
     assert.equal(payStore.getIntent(intent.id)?.status, 'released');
     assert.equal(supplier.orderCount(), 0);
   });
-
-  test('an airline price change at payment cancels the unpaid order and releases funds', async () => {
-    const { deps, supplier, payStore, intent } = await setup({ priceChangeOnPay: true });
-    const rec = await placeOrder(deps, FUL, BOOKING, NOW);
-    assert.equal(rec.status, 'failed');
-    assert.equal(payStore.getIntent(intent.id)?.status, 'released');
-    assert.ok(supplier.calls.includes('cancel'));
-    assert.equal(supplier.calls.filter((c) => c === 'pay').length, 1, 'payment was refused, not retried');
-  });
 });
 
 describe('partial failure', () => {
@@ -215,7 +217,7 @@ describe('partial failure', () => {
     const { deps, store, payStore, intent } = await setup({ ticketSeatsCovered: 'first_only' }, 2);
     const rec = await placeOrder(deps, FUL, BOOKING, NOW);
     assert.equal(rec.status, 'partially_fulfilled');
-    assert.equal((await captureIfTicketed(deps, FUL, BOOKING, NOW)).status, 'partially_fulfilled');
+    assert.equal((await captureIfVerified(deps, FUL, BOOKING, NOW)).status, 'partially_fulfilled');
     assert.equal(payStore.getIntent(intent.id)?.status, 'authorised');
     const screen = customerScreen(store.get(BOOKING)!);
     assert.equal(screen.status.headline, 'Some tickets are not yet issued');
@@ -224,18 +226,7 @@ describe('partial failure', () => {
 });
 
 describe('cancellations', () => {
-  test('cancelling a confirmed booking refunds the captured payment', async () => {
-    const { deps, payStore, intent, store } = await setup();
-    await placeOrder(deps, FUL, BOOKING, NOW);
-    await captureIfTicketed(deps, FUL, BOOKING, NOW);
-    const out = await cancelBooking(deps, FUL, BOOKING, NOW);
-    assert.equal(out.status, 'refunded');
-    assert.equal(payStore.getIntent(intent.id)?.status, 'refunded');
-    assert.equal(payStore.getIntent(intent.id)?.refundedMinor, intent.amount.amountMinor);
-    assert.equal(store.get(BOOKING)?.status, 'refunded');
-  });
-
-  test('cancelling before capture releases the authorisation instead of refunding', async () => {
+  test('cancelling before GO verification releases the authorisation, and nothing is refunded', async () => {
     const { deps, payStore, intent } = await setup();
     await placeOrder(deps, FUL, BOOKING, NOW);
     const out = await cancelBooking(deps, FUL, BOOKING, NOW);
@@ -243,7 +234,7 @@ describe('cancellations', () => {
     assert.equal(payStore.getIntent(intent.id)?.status, 'released');
   });
 
-  test('a booking that was never ticketed cannot be cancelled through this path', async () => {
+  test('a booking that was never ordered cannot be cancelled through this path', async () => {
     const { deps } = await setup();
     await assert.rejects(cancelBooking(deps, FUL, BOOKING, NOW), RangeError);
   });
@@ -251,7 +242,7 @@ describe('cancellations', () => {
 
 describe('privacy by role', () => {
   const sample: FulfilmentRecord = {
-    bookingId: BOOKING, status: 'ticketed', intentId: 'x', offer: {} as never, passengers: passengers(1),
+    bookingId: BOOKING, status: 'verified', intentId: 'x', offer: {} as never, passengers: passengers(1),
     totalMinor: 1, currency: 'NGN', holdExpiresAtUtc: NOW, orderId: 'o', bookingReference: 'R',
     documents: [{ type: 'electronic_ticket', number: 'FX-123456', passengerIndex: 0 }], lockedReason: null, blockedReason: null,
   };
@@ -298,25 +289,6 @@ describe('production ticketing gate', () => {
   });
 });
 
-describe('airline payment amount (regression)', () => {
-  test('the airline is paid its supplier price in its currency, not the customer total with the GO fee', async () => {
-    const { deps, supplier, offer, store } = await setup();
-    // The customer total includes a service fee on top of the supplier price.
-    store.patch(BOOKING, { totalMinor: offer.displayPrice.amountMinor + 5_000 });
-    const paid: Array<{ amountMinor: number; currency: string }> = [];
-    const original = supplier.payOrder!.bind(supplier);
-    supplier.payOrder = async (orderId, amountMinor, currency, key) => {
-      paid.push({ amountMinor, currency });
-      return original(orderId, amountMinor, currency, key);
-    };
-    await placeOrder(deps, FUL, BOOKING, NOW);
-    assert.equal(paid.length, 1);
-    assert.equal(paid[0].amountMinor, offer.supplierPrice.amountMinor);
-    assert.equal(paid[0].currency, offer.supplierPrice.currency);
-    assert.notEqual(paid[0].amountMinor, offer.displayPrice.amountMinor + 5_000);
-  });
-});
-
 describe('customer screen and internal reasons (regression)', () => {
   test('a locked booking shows the customer a neutral line, never the internal reconciliation text', async () => {
     const { deps, store } = await setup({ timeoutOnCreateAfterCreating: true });
@@ -358,11 +330,10 @@ describe('fulfilment actions enforce actors (regression)', () => {
   test('an admin without MFA cannot cancel; the same admin with MFA can', async () => {
     const { deps, store } = await setup();
     await placeOrder(deps, FUL, BOOKING, NOW);
-    await captureIfTicketed(deps, FUL, BOOKING, NOW);
     await assert.rejects(cancelBooking(deps, ADMIN_NO_MFA, BOOKING, NOW), /multi-factor/);
-    assert.equal(store.get(BOOKING)?.status, 'confirmed');
+    assert.equal(store.get(BOOKING)?.status, 'tickets_issued');
     const out = await cancelBooking(deps, ADMIN_MFA, BOOKING, NOW);
-    assert.equal(out.status, 'refunded');
+    assert.equal(out.status, 'cancelled');
   });
 });
 
@@ -381,6 +352,6 @@ describe('identity documents are never assumed (regression)', () => {
     assert.equal(store.get(BOOKING)!.offer.identityDocumentRequirement, undefined);
     const rec = await placeOrder(deps, FUL, BOOKING, NOW);
     assert.notEqual(rec.blockedReason, 'x');
-    assert.ok(['order_pending', 'ticketed', 'ticketing_pending', 'partially_fulfilled'].includes(rec.status));
+    assert.ok(['partner_ordered', 'tickets_issued', 'ticketing_pending', 'partially_fulfilled'].includes(rec.status));
   });
 });

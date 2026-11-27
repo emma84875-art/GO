@@ -40,7 +40,7 @@ export type RequestResult =
 export const SUPPORT_MESSAGE_MAX = 500;
 
 // Statuses where a cancellation request can be raised, because a supplier order exists.
-const CANCELLABLE: readonly FulfilmentStatus[] = ['order_pending', 'ticketing_pending', 'partially_fulfilled', 'ticketed', 'confirmed'];
+const CANCELLABLE: readonly FulfilmentStatus[] = ['partner_ordered', 'ticketing_pending', 'partially_fulfilled', 'tickets_issued', 'verified', 'captured', 'confirmed'];
 
 const NOT_CANCELLABLE_REASON: Partial<Record<FulfilmentStatus, string>> = {
   held: 'Your booking is still being processed, so it cannot be cancelled here. Contact support if you need help.',

@@ -7,7 +7,8 @@
 //   - Deny by default. An action is allowed only if the table below names it for that actor.
 //   - Staff actions require a multi-factor session (aal2). Customers act only on their own bookings.
 
-export type Role = 'customer' | 'support' | 'operations' | 'admin';
+// Finance staff hold remittance access only. They have no passenger, ticket or booking-read permission.
+export type Role = 'customer' | 'support' | 'operations' | 'finance' | 'admin';
 
 export type ServiceName = 'payments' | 'fulfilment' | 'worker';
 

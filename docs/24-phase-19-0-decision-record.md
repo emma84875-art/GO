@@ -101,22 +101,43 @@ A customer booking must not be marked **confirmed** until the ticket documents h
 
 ## 3. Approved operational sequence
 
-This is the only permitted sequence for a customer booking.
+This is the only permitted sequence for a customer booking. It was amended on 26 November 2026 by the owner's instruction for Phase 19.1: partner remittance is no longer a booking step. It is a separate financial obligation (section 3A). The sequence now ends at confirmation.
 
 1. The customer submits a booking.
 2. GO validates passenger and itinerary information and revalidates the fare.
 3. The customer's payment is **authorised** (held, not captured).
 4. The authorised supplier or consolidator carries the funding and completes ticket issuance under an approved commercial arrangement.
-5. GO independently verifies the issued tickets (names, itinerary, supplier booking reference).
+5. GO independently verifies the issued tickets (names, itinerary, supplier booking reference). Only verified tickets are valid for the customer.
 6. GO **captures** the customer's authorised payment.
-7. GO settles the agreed amount with the partner according to the approved commercial terms.
-8. GO confirms the booking to the customer.
+7. GO **confirms** the booking to the customer. Confirmation needs steps 5 and 6 to have succeeded, and nothing else. It does not wait for the payment provider to settle funds into GO's bank, and it does not wait for GO to remit anything to the ticketing partner.
 
 **Failure rules.**
 - If step 4 fails, the authorisation is released. Nothing is captured and GO pays nothing.
 - If step 5 fails, the authorisation is released. Nothing is captured.
 - If step 6 fails after verification, the case is a critical incident. It is escalated at once and must be visible on the admin dashboard. GO does not pay the partner from its own funds to close the gap.
-- Step 7 happens only after step 6 is complete. GO never settles with the partner before the customer's payment has been captured.
+- Step 6 happens only after step 5 is complete. Step 7 happens only after step 6 is complete.
+
+**Ticket visibility.** A customer may access a ticket as a valid travel document only after step 5 has succeeded. Before that, the customer sees a pending-verification status with no valid ticket.
+
+### 3A. Money flows, kept apart
+
+"Settled" is not one event. These are separate flows, and only the first two touch the booking state:
+
+1. **Customer payment capture.** The payment provider takes the authorised amount from the customer (step 6). The payment is `captured` and the booking moves to `captured`. This is a confirmation prerequisite.
+2. **Provider settlement.** The payment provider pays the captured funds into GO's bank. It is reconciled separately. It never gates a booking and is not a confirmation prerequisite.
+3. **Partner remittance.** Where the partner agreement requires GO to pay the ticketing partner an amount, GO pays it under that agreement. It is an obligation tracked on its own record with its own status (not required, pending, paid, failed, under review). It never gates a booking. It is not GO financing ticket issuance. The ticketing partner carries the supplier funding exposure (D3). The amount, currency, due date and payment reference come from the partner agreement and are never invented. Where the agreement requires no remittance, the status is "not required".
+
+Partner remittance rules (Phase 19.1, administrator safeguards):
+
+- Finance staff with MFA (a dedicated role, docs/25 section 8) may create, fail, retry and review a remittance across bookings. Only an administrator with MFA may mark a remittance `paid`, record one as `not_required`, or correct its agreement terms. Support, operations and customers have no remittance access.
+- Every remittance cites the partner agreement reference and the clause that sets its amount, currency and due date. No due date is hardcoded.
+- `not_required` needs the approving administrator, written evidence, and no amount.
+- Each change is recorded in an append-only audit trail. A retry after failure is counted and needs a note.
+- One remittance record per booking. Instalments and several invoices are not supported and must be added before such an agreement is used live.
+
+Customer capture and partner remittance are never treated as the same thing. A captured customer payment does not show that the partner has been paid, and a remittance that is pending, failed or under review does not change the customer's booking.
+
+Confirmation prerequisites: GO's independent verification of every ticket, and the customer's successful capture. Nothing else.
 
 ## 4. Implementation restrictions in force
 
@@ -136,7 +157,7 @@ Until the owner approves Phase 19.1 in writing:
 |---|---|---|---|
 | E1 | Written confirmation from a payment provider of NGN card authorisation and later capture | Any card payment in production (D1, D2) | Approve a provider enquiry |
 | E2 | ~~Whether authorisation counts as "secured"~~ **Resolved: option (c), 26 Nov 2026** | Closed | None |
-| E3 | Authorised ticketing partner or consolidator that carries supplier funding (D3, D4), with written capability and commercial terms, including settlement terms for step 7 | **All real customer bookings** (D4) | Identify and approve a partner |
+| E3 | Authorised ticketing partner or consolidator that carries supplier funding (D3, D4), with written capability and commercial terms, including remittance terms under the partner agreement (section 3A) | **All real customer bookings** (D4) | Identify and approve a partner |
 | E4 | Approved FX source, rate-lock mechanism and customer pricing policy | Any foreign-currency booking (D5) | Approve an FX approach |
 | E5 | Nigerian counsel on data protection, passenger data, refunds and payment licensing | Passenger data collection, passport handling, launch (D6) | Appoint counsel |
 | E6 | Confirmed Nigerian merchant eligibility and IATA or documentation requirements for travel payments | Provider go-live (D2) | Provider response |
@@ -148,7 +169,7 @@ These are requirements on later phases. Nothing here is implemented in Phase 19.
 
 - **Payment.** Capture is allowed only after the partner's tickets are issued and GO has verified them. The existing capture gate (supplier fulfilment confirmed, amount matches, window open) stays, and its "supplier fulfilment" means verified partner issuance. (`12`)
 - **Supplier funding.** The orchestrator's step "pay the supplier from our balance" (`13`, step 4) is replaced by partner-funded issuance under an approved agreement. No code path may pay a supplier from GO funds. A partner whose terms require GO prefunding is not usable. (`13`)
-- **Settlement.** A new step settles the partner after capture (sequence step 7). It is recorded, reconciled and gated on capture. (`13`, `12`)
+- **Money flows.** Customer capture gates confirmation. Provider settlement and partner remittance are separate (section 3A) and never gate a booking. Partner remittance is an obligation recorded on its own record, following the partner agreement. (`13`, `12`, `25`)
 - **Zero-capital plan.** Route A (Duffel pre-funded balance) is withdrawn. Route A may be reconsidered only if its funding sits with a partner under D3. (`14`)
 - **Partner interface.** The ticketing interface targets a partner role, not Duffel. Duffel's order operations remain unbuilt and are not a dependency of Phase 19.1.
 - **Existing code conflicts.** The fulfilment orchestrator's supplier "pay once" step and the Duffel order-operations design assume GO-funded payment. They are fixture-only and not connected to any route, so nothing is live. They must be replaced before any supplier path is enabled. This is recorded as a defect to fix in Phase 19.2 and is a blocker for enabling any supplier.

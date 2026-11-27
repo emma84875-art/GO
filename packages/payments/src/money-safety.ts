@@ -1,6 +1,6 @@
 // Money-safety policy, enforced in code. Option A: authorise (hold the funds) first, and
-// capture only after the supplier has confirmed fulfilment. Option B (capturing before
-// fulfilment) is not approved and has no code path here.
+// capture only after GO has verified the tickets issued by the partner. Option B (capturing before
+// verification) is not approved and has no code path here.
 //
 // A capture needs every condition below. Any failed condition blocks the capture and the
 // reasons are returned, so the decision is always explainable.
@@ -8,7 +8,7 @@
 import type { PaymentIntent } from './intent.ts';
 import type { ProviderCapabilities } from './provider.ts';
 
-export type FulfilmentState = 'confirmed' | 'pending' | 'failed' | 'unknown';
+export type FulfilmentState = 'verified' | 'pending' | 'failed' | 'unknown';
 
 export interface CaptureInput {
   readonly fulfilment: FulfilmentState;
@@ -26,7 +26,7 @@ export interface CaptureDecision {
 export function captureDecision(intent: PaymentIntent, input: CaptureInput): CaptureDecision {
   const reasons: string[] = [];
   if (intent.status !== 'authorised') reasons.push(`Intent is ${intent.status}, not authorised.`);
-  if (input.fulfilment !== 'confirmed') reasons.push(`Supplier fulfilment is ${input.fulfilment}, not confirmed.`);
+  if (input.fulfilment !== 'verified') reasons.push(`Ticket verification is ${input.fulfilment}, not verified by GO.`);
   if (intent.amount.amountMinor !== input.bookingTotalMinor || intent.amount.currency !== input.bookingCurrency) {
     reasons.push('Amount does not match the booking total.');
   }

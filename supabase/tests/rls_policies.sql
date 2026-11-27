@@ -75,7 +75,7 @@ begin
   perform set_config('request.jwt.claim.sub', a::text, true);
   set local role authenticated;
   begin
-    update public.bookings set reservation_status = 'reservation_confirmed';
+    update public.bookings set booking_status = 'quoted';
     raise exception 'FAIL 4: customer updated a booking';
   exception when insufficient_privilege then
     null;
@@ -121,7 +121,7 @@ begin
   if n <> 2 then raise exception 'FAIL 8: support sees % bookings, expected 2', n; end if;
   -- ...but cannot change them.
   begin
-    update public.bookings set reservation_status = 'reservation_confirmed';
+    update public.bookings set booking_status = 'quoted';
     raise exception 'FAIL 8b: support updated a booking';
   exception when insufficient_privilege then
     null;
@@ -141,28 +141,28 @@ begin
   -- 10. The service role (server code) can progress a booking through the lifecycle.
   set local role service_role;
   update public.bookings
-     set reservation_status = 'reservation_confirmed', ticket_status = 'ticketing_pending'
+     set booking_status = 'quoted', quoted_at = now()
    where id = '00000000-0000-0000-0000-0000000000a1';
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FAIL 10: service role update affected % rows', n; end if;
   reset role;
 
-  -- 11. A ticket can never be recorded as issued against an unconfirmed reservation.
+  -- 11. A booking cannot skip stages: tickets cannot be recorded as issued from draft.
   begin
     update public.bookings
-       set reservation_status = 'reservation_pending', ticket_status = 'ticketed'
+       set booking_status = 'tickets_issued', tickets_issued_at = now()
      where id = '00000000-0000-0000-0000-0000000000b1';
-    raise exception 'FAIL 11: ticketed booking accepted with pending reservation';
+    raise exception 'FAIL 11: tickets_issued accepted from draft';
   exception when check_violation then
     null;
   end;
 
-  -- 12. Ticketing cannot start on an unconfirmed reservation.
+  -- 12. Partner ticketing cannot start before the customer's payment is authorised.
   begin
     update public.bookings
-       set ticket_status = 'ticketing_pending'
+       set booking_status = 'ticketing_pending'
      where id = '00000000-0000-0000-0000-0000000000b1';
-    raise exception 'FAIL 12: ticketing started without a confirmed reservation';
+    raise exception 'FAIL 12: partner ticketing started from draft';
   exception when check_violation then
     null;
   end;
@@ -195,13 +195,12 @@ begin
   end;
   reset role;
 
-  -- 15. Every payment state the code can reach can be stored, and an unknown state cannot.
+  -- 15. A payment is created only as initiated. Every other state is reached through the payment functions (checked in
+  -- supabase/tests/booking_lifecycle.sql), so no direct insert can create a captured or other financial state.
   set local role service_role;
-  foreach st in array array['initiated','authorised','captured','failed','expired','released','refund_pending','refunded','review_required'] loop
-    insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
-    values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-' || st, 1500000, 'NGN', st, 'res-' || st, now() + interval '1 hour');
-    delete from public.payments where reference = 'res-' || st;
-  end loop;
+  insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
+  values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-initiated', 1500000, 'NGN', 'initiated', 'res-initiated', now() + interval '1 hour');
+  delete from public.payments where reference = 'res-initiated';
   begin
     insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
     values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-bad', 1, 'NGN', 'succeeded', 'res-bad', now() + interval '1 hour');
@@ -212,9 +211,22 @@ begin
   reset role;
 
   -- 16. One live payment per booking, enforced by the database. A failed attempt is not live.
+  -- Provider events come from the backend: no signed-in user is present when they are applied.
   set local role service_role;
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claims', '{}', true);
   insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
-  values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-live-1', 1500000, 'NGN', 'authorised', 'res-live-1', now() + interval '1 hour');
+  values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-failed', 1500000, 'NGN', 'initiated', 'res-failed', now() + interval '1 hour');
+  if public.apply_payment_provider_event('fixture', 'rls-failed-1', 'payment.failed', 'ref-failed', 'failed',
+       1500000, 'NGN', now(), 'webhook_signature', repeat('b', 64)) <> 'applied' then
+    raise exception 'FAIL 16: the provider failure was not applied';
+  end if;
+  insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
+  values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-live-1', 1500000, 'NGN', 'initiated', 'res-live-1', now() + interval '1 hour');
+  if public.apply_payment_provider_event('fixture', 'rls-live-1', 'payment.authorised', 'ref-live-1', 'authorised',
+       1500000, 'NGN', now(), 'webhook_signature', repeat('a', 64)) <> 'applied' then
+    raise exception 'FAIL 16: the provider authorisation was not applied';
+  end if;
   begin
     insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
     values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-live-2', 1500000, 'NGN', 'initiated', 'res-live-2', now() + interval '1 hour');
@@ -222,11 +234,9 @@ begin
   exception when unique_violation then
     null;
   end;
-  insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
-  values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-failed', 1500000, 'NGN', 'failed', 'res-failed', now() + interval '1 hour');
   begin
     insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
-    values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-reuse', 1500000, 'NGN', 'expired', 'res-live-1', now() + interval '1 hour');
+    values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-reuse', 1500000, 'NGN', 'initiated', 'res-live-1', now() + interval '1 hour');
     raise exception 'FAIL 16b: a reused payment reference was accepted';
   exception when unique_violation then
     null;
@@ -361,7 +371,7 @@ begin
   end;
   -- 20b. Roles outside the list are rejected by the database.
   begin
-    update public.profiles set role = 'finance' where id = a;
+    update public.profiles set role = 'root' where id = a;
     raise exception 'FAIL 20b: an unknown role was accepted';
   exception when check_violation then
     null;

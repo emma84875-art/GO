@@ -74,13 +74,14 @@ export class PaystackPaymentProvider implements PaymentProvider {
   }
 
   parseWebhook(rawBody: string): ParsedWebhook {
-    const body = JSON.parse(rawBody) as { event?: string; data?: { reference?: string; amount?: number; currency?: string; status?: string } };
+    const body = JSON.parse(rawBody) as { event?: string; data?: { id?: number | string; reference?: string; amount?: number; currency?: string; status?: string } };
     const data = body.data;
-    if (!body.event || !data?.reference || !Number.isSafeInteger(data.amount) || !data.currency) {
+    if (!body.event || data?.id === undefined || !data?.reference || !Number.isSafeInteger(data.amount) || !data.currency) {
       throw new PaymentProviderError('invalid_response', 'Paystack webhook is missing fields');
     }
     // Paystack amounts are in the currency's minor unit (kobo for NGN), matching our model.
     return {
+      eventId: String(data.id),
       eventName: body.event,
       providerRef: data.reference,
       reportedAmountMinor: data.amount as number,

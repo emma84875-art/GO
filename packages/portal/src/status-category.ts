@@ -1,10 +1,10 @@
-// Display categories for the dashboards. Every fulfilment status maps to exactly one category.
-// The mapping is exhaustive (enforced by the type), so a new status cannot be shown without a
+// Display categories for the dashboards. Every booking state maps to exactly one category.
+// The mapping is exhaustive (enforced by the type), so a new state cannot be shown without a
 // decision about how to present it.
 //
-// "Confirmed" is shown only for the fulfilment status 'confirmed', which requires supplier
-// tickets AND captured payment (see docs/13). "Tickets issued" is shown for 'ticketed', which
-// means the supplier has issued tickets but the payment has not yet been captured.
+// "Tickets issued" is shown only from 'verified' onwards, because GO has verified the tickets
+// by then (docs/24). A supplier's 'tickets_issued' state is still pending GO's own check.
+// "Confirmed" is shown only for 'confirmed', which requires verification and capture (docs/24, section 3).
 
 import type { FulfilmentStatus } from '../../fulfilment/src/status.ts';
 
@@ -20,14 +20,19 @@ export type DisplayCategory =
   | 'refunded';
 
 const CATEGORY: Readonly<Record<FulfilmentStatus, DisplayCategory>> = {
-  held: 'pending',
+  draft: 'pending',
+  quoted: 'pending',
   authorised: 'pending',
-  order_pending: 'pending',
+  partner_ordered: 'pending',
   ticketing_pending: 'pending',
+  tickets_issued: 'pending',
   order_unknown: 'attention',
   ticketing_unknown: 'attention',
   partially_fulfilled: 'attention',
-  ticketed: 'ticketed',
+  verification_failed: 'attention',
+  review_required: 'attention',
+  verified: 'ticketed',
+  captured: 'ticketed',
   confirmed: 'confirmed',
   failed: 'failed',
   expired: 'failed',
@@ -58,4 +63,4 @@ export function categoryLabel(status: FulfilmentStatus): string {
 }
 
 // Statuses in which no supplier write may be retried automatically. A person must check them.
-export const NEEDS_CHECKING: readonly FulfilmentStatus[] = ['order_unknown', 'ticketing_unknown', 'partially_fulfilled'];
+export const NEEDS_CHECKING: readonly FulfilmentStatus[] = ['order_unknown', 'ticketing_unknown', 'partially_fulfilled', 'verification_failed', 'review_required'];

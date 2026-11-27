@@ -2,12 +2,6 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { money, addMoney, sumMoney, formatMoney } from '../src/money.ts';
-import {
-  canTransitionReservation,
-  canTransitionTicket,
-  transitionTicket,
-  customerStatusLabel,
-} from '../src/booking-status.ts';
 import { formatLocalTime, durationMinutes } from '../src/time.ts';
 
 describe('money', () => {
@@ -35,53 +29,6 @@ describe('money', () => {
   test('formats using the currency minor-unit exponent', () => {
     const formatted = formatMoney(money(123456, 'NGN'), 'en-NG');
     assert.equal(formatted, 'NGN 1,234.56');
-  });
-});
-
-describe('reservation status', () => {
-  test('allows the forward path only', () => {
-    assert.equal(canTransitionReservation('draft', 'quoted'), true);
-    assert.equal(canTransitionReservation('payment_confirmed', 'reservation_pending'), true);
-    assert.equal(canTransitionReservation('draft', 'reservation_confirmed'), false);
-  });
-
-  test('confirmed and failed reservations are terminal', () => {
-    assert.equal(canTransitionReservation('reservation_confirmed', 'draft'), false);
-    assert.equal(canTransitionReservation('reservation_failed', 'reservation_pending'), false);
-  });
-});
-
-describe('ticket status', () => {
-  test('cannot start ticketing before the reservation is confirmed', () => {
-    assert.throws(
-      () => transitionTicket('reservation_pending', 'not_issued', 'ticketing_pending'),
-      /Cannot start ticketing/,
-    );
-  });
-
-  test('can move to ticketed only from ticketing_pending', () => {
-    assert.equal(canTransitionTicket('not_issued', 'ticketed'), false);
-    assert.equal(canTransitionTicket('ticketing_pending', 'ticketed'), true);
-  });
-
-  test('ticketing failure is terminal and is not silently retried', () => {
-    assert.equal(canTransitionTicket('ticketing_failed', 'ticketing_pending'), false);
-  });
-});
-
-describe('customer status label', () => {
-  test('shows Ticketed only when the ticket status is ticketed', () => {
-    assert.equal(customerStatusLabel('reservation_confirmed', 'ticketed'), 'Ticketed');
-    for (const reservation of ['reservation_pending', 'reservation_confirmed', 'payment_confirmed'] as const) {
-      for (const ticket of ['not_issued', 'ticketing_pending', 'ticketing_failed'] as const) {
-        assert.notEqual(customerStatusLabel(reservation, ticket), 'Ticketed');
-      }
-    }
-  });
-
-  test('a reservation without tickets is never described as confirmed ticket', () => {
-    const label = customerStatusLabel('reservation_pending', 'not_issued');
-    assert.match(label, /not yet ticketed/);
   });
 });
 

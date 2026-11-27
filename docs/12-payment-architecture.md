@@ -23,9 +23,9 @@ Not verified in this session: Paystack's `/transaction/initialize` and `/transac
 - `provider.ts`: common interface (initiate, status, capture, release, refund, webhook verify and parse). Capabilities are `supported`, `unconfirmed` or `not_supported`, each with evidence.
 - `state.ts`: payment states and the only legal transitions. Anything else goes to `review_required`.
 - `transitions.ts`: the only place a state changes. Every change is written to the audit log.
-- `payment-flow.ts`: starts payment only for a valid booking. Checks, in order: no live payment for this booking (duplicate guard), owner production gate, provider authorisation confirmed, live hold, fare revalidated with the supplier, amount equals the accepted summary. Also capture after confirmed fulfilment, supplier-failure release, refunds, and expiry sweep.
+- `payment-flow.ts`: starts payment only for a valid booking. Checks, in order: no live payment for this booking (duplicate guard), owner production gate, provider authorisation confirmed, live hold, fare revalidated with the supplier, amount equals the accepted summary. Capture is two steps: a request after confirmed fulfilment (`capture_requested`), then confirmation only from the provider's own status (`confirmCapture`). Also supplier-failure release, refunds, and expiry sweep.
 - `money-safety.ts`: capture allowed only when the intent is authorised, supplier fulfilment is confirmed, the amount matches, the provider supports capture, and the window has not ended. Option B has no code path.
-- `webhook.ts`: verify the signature over the raw body, deduplicate, then ask the provider for the true status and amount. Webhook bodies are never trusted alone.
+- `webhook.ts`: verify the signature over the raw body, deduplicate on the provider's event ID, then ask the provider for the true status and amount. Webhook bodies are never trusted alone. Every attempt is recorded with its event ID, event name, time and result.
 - `reconcile.ts`: reports discrepancies only. Never changes state.
 - `store.ts`: in-memory store with a read-only audit view. Persistence still to be built.
 
@@ -37,10 +37,12 @@ Not verified in this session: Paystack's `/transaction/initialize` and `/transac
 4. A payment after its window is never accepted silently. It goes to review.
 5. Amount mismatches go to review. Nothing is captured.
 6. Duplicate webhooks change state once. Duplicate payment attempts return the existing intent.
+7. Capture is requested, then confirmed by the provider. Nothing reaches `captured` from a request, a browser redirect, a client status or a database edit. Only a `capture_requested` payment can be confirmed.
+8. No signed-in user can change a payment. The database allows a payment change only through the backend capture request and the verified provider event, and records every attempt (docs/25, section 9).
 
 ## Known limitations and outstanding decisions
 
-- No database persistence yet. Booking, payment and audit tables are not wired.
+- The database controls (docs/25, section 9) are built and tested, but the TypeScript payment flow still uses the in-memory store and is not connected to them. Wiring, the live webhook endpoint and provider capture confirmation are 19.x work.
 - Paystack and Flutterwave endpoints beyond webhook handling are unverified and unexecuted.
 - No fee schedule, settlement terms or bank-transfer support confirmed.
 - Hold release with the supplier (`releaseHold`) is not in the supplier interface. Holds expire on their own timers.
@@ -50,4 +52,4 @@ Not verified in this session: Paystack's `/transaction/initialize` and `/transac
 
 ## Update: 26 Nov 2026
 
-Payment model is Option A only, as set out in `24` (D1, section 3). The capture gate's "supplier fulfilment confirmed" means verified ticket issuance by the authorised partner, which carries the supplier funding under D3. Capture follows verification, and partner settlement follows capture (sequence step 7). This is not yet implemented. Persistence, Paystack and Flutterwave endpoints and fee terms remain open, as listed above.
+Payment model is Option A only, as set out in `24` (D1, section 3). The capture gate's "supplier fulfilment confirmed" means verified ticket issuance by the authorised partner, which carries the supplier funding under D3. Capture follows verification, and confirmation follows capture. Partner remittance under the partner agreement and provider settlement into GO's bank are separate and do not gate confirmation (`24`, section 3A). This is not yet implemented. Persistence, Paystack and Flutterwave endpoints and fee terms remain open, as listed above.

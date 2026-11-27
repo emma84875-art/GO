@@ -93,7 +93,7 @@ export interface HoldWatchItem {
 export function holdWatch(actor: Actor, bookings: readonly PortalBooking[], nowUtc: string, warnMinutes = 10): HoldWatchItem[] {
   requireOperations(actor);
   return bookings
-    .filter((b) => b.record.status === 'held' || b.record.status === 'authorised')
+    .filter((b) => b.record.status === 'quoted' || b.record.status === 'authorised')
     .map((b) => ({
       bookingId: b.record.bookingId,
       status: b.record.status,
@@ -113,7 +113,7 @@ export interface AttentionItem {
   readonly reasons: readonly string[];
 }
 
-const IN_FLIGHT_WITHOUT_OUTCOME: readonly FulfilmentStatus[] = ['order_pending', 'ticketing_pending', 'cancellation_pending', 'refund_pending'];
+const IN_FLIGHT_WITHOUT_OUTCOME: readonly FulfilmentStatus[] = ['partner_ordered', 'ticketing_pending', 'cancellation_pending', 'refund_pending'];
 const RANK: Record<AttentionSeverity, number> = { high: 0, medium: 1, low: 2 };
 
 // Bookings that a person should look at: supplier outcome unknown or partial, blocked steps,
@@ -171,7 +171,7 @@ export interface Investigation {
 export function investigate(actor: Actor, booking: PortalBooking, paymentAudit: readonly AuditEntry[], nowUtc: string, warnMinutes = 10): Investigation {
   requireOperations(actor);
   const r = booking.record;
-  const holdOpen = r.status === 'held' || r.status === 'authorised';
+  const holdOpen = r.status === 'quoted' || r.status === 'authorised';
   return {
     bookingId: r.bookingId,
     ownerUserId: booking.ownerUserId,

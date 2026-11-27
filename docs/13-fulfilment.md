@@ -72,5 +72,5 @@ Because idempotency at Duffel is unconfirmed, an unclear order-creation outcome 
 
 - Decision 4 in this document (company funding of the Duffel balance) is **withdrawn**. No GO-funded balance will be used.
 - Orchestrator step 4 ("pay once" from the supplier balance) must be replaced by partner-funded issuance under an approved agreement. No code path may pay a supplier from GO funds.
-- A settlement step with the partner follows capture (sequence step 7 in `24`).
+- Partner remittance is a separate obligation under the partner agreement, tracked on its own record (`24`, section 3A). It does not gate confirmation. Provider settlement into GO's bank is also separate.
 - Current code is fixture-only and not connected to routes. It must be changed in Phase 19.2 before any supplier path is enabled.

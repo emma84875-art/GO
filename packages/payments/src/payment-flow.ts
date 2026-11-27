@@ -11,6 +11,7 @@ import type { PaymentStore } from './store.ts';
 import { liveIntentFor } from './intent.ts';
 import { captureDecision, type FulfilmentState, refundableMinor } from './money-safety.ts';
 import { moveIntent } from './transitions.ts';
+import { CAPTURE_REQUEST_TARGET } from './state.ts';
 import { authorise, actorLabel, type Actor } from '../../auth/src/actor.ts';
 
 // Every money action writes who did it. The label never contains a token or an email address.
@@ -35,6 +36,10 @@ export interface Gate {
   readonly productionEnabled: boolean; // owner switch; false until approval
 }
 
+// Providers allowed to take booking payments. Paystack is excluded (see the start gate). Adding a provider needs its
+// capture confirmed under the approved rule, and a change here is reviewed as a payment change.
+export const BOOKING_PAYMENT_PROVIDERS: readonly string[] = ['fixture'];
+
 export type StartOutcome =
   | { readonly status: 'initiated'; readonly intentId: string; readonly redirectUrl: string }
   | { readonly status: 'duplicate_attempt'; readonly intentId: string }
@@ -43,6 +48,7 @@ export type StartOutcome =
       readonly reason:
         | 'production_disabled'
         | 'authorisation_not_confirmed'
+        | 'provider_excluded'
         | 'hold_missing'
         | 'hold_expired'
         | 'fare_expired'
@@ -93,7 +99,17 @@ async function startPaymentClaimed(
     return { status: 'blocked', reason: 'production_disabled', detail: 'Production payments are disabled.' };
   }
 
-  // 3. Money-safety: no authorisation without written or documented provider support.
+  // 3a. Booking payments accept only providers in BOOKING_PAYMENT_PROVIDERS. Paystack is excluded for now: it captures on
+  // payment, before ticket verification, which the approved capture rule forbids. The exclusion is by name, not by flag.
+  if (!BOOKING_PAYMENT_PROVIDERS.includes(provider.name)) {
+    return {
+      status: 'blocked',
+      reason: 'provider_excluded',
+      detail: `Provider ${provider.name} is not in the booking payment flow. Payment is not started.`,
+    };
+  }
+
+  // 3b. Money-safety: no authorisation without written or documented provider support.
   if (provider.capabilities.authorisation !== 'supported') {
     return {
       status: 'blocked',
@@ -178,7 +194,7 @@ export type CaptureOutcome =
   | { readonly status: 'blocked'; readonly reasons: readonly string[] }
   | { readonly status: 'review_required'; readonly intentId: string; readonly reason: string };
 
-// Capture is attempted only when fulfilment is confirmed and every money-safety condition holds.
+// Capture is attempted only when GO has verified the tickets and every money-safety condition holds.
 export async function captureAfterFulfilment(
   store: PaymentStore,
   actor: Actor,
@@ -205,21 +221,56 @@ export async function captureAfterFulfilment(
     return { status: 'blocked', reasons: decision.allowed ? ['Provider capture is not available.'] : decision.reasons };
   }
 
+  // Step 1: GO requests the capture. This records the request only; it is not proof that money moved.
+  const requested = moveIntent(store, intent, CAPTURE_REQUEST_TARGET, 'capture_requested', nowUtc,
+    `Capture requested by ${actorLabel(actor)} after confirmed fulfilment`);
   try {
-    const truth = await provider.capture(intent.providerRef, intent.amount, `${intent.reference}:capture:1`);
-    if (truth.state !== 'captured') {
-      const updated = moveIntent(store, intent, 'review_required', 'capture_unexpected', nowUtc, `Capture returned ${truth.state}`);
-      return { status: 'review_required', intentId: updated.id, reason: `capture returned ${truth.state}` };
+    await provider.capture(requested.providerRef as string, requested.amount, `${requested.reference}:capture:1`);
+  } catch {
+    // Outcome unknown. Never assume the capture failed or succeeded; a person checks the provider.
+    const updated = moveIntent(store, requested, 'review_required', 'capture_unknown', nowUtc, 'Capture request had no clear result');
+    return { status: 'review_required', intentId: updated.id, reason: 'capture outcome unknown' };
+  }
+  // Step 2: the provider's own status for the payment confirms the result. Only that confirms capture.
+  return confirmCapture(store, provider, requested.id, nowUtc);
+}
+
+// Confirms a capture request from the provider's verified status. captured is set only when the provider reports
+// captured for the same amount and currency. A declined capture returns the payment to authorised.
+export async function confirmCapture(
+  store: PaymentStore,
+  provider: PaymentProvider,
+  intentId: string,
+  nowUtc: string,
+): Promise<CaptureOutcome> {
+  const intent = store.getIntent(intentId);
+  if (!intent || intent.status !== CAPTURE_REQUEST_TARGET || !intent.providerRef) {
+    return { status: 'blocked', reasons: ['No capture request is awaiting confirmation for this payment.'] };
+  }
+  let truth;
+  try {
+    truth = await provider.getStatus(intent.providerRef);
+  } catch {
+    const updated = moveIntent(store, intent, 'review_required', 'capture_unknown', nowUtc, 'Provider status could not be read after the capture request');
+    return { status: 'review_required', intentId: updated.id, reason: 'capture outcome unknown' };
+  }
+  if (truth.state === 'captured') {
+    if (truth.amount.amountMinor !== intent.amount.amountMinor || truth.amount.currency !== intent.amount.currency) {
+      const updated = moveIntent(store, intent, 'review_required', 'amount_mismatch', nowUtc,
+        `Provider captured ${truth.amount.amountMinor} ${truth.amount.currency}, intent ${intent.amount.amountMinor} ${intent.amount.currency}`);
+      return { status: 'review_required', intentId: updated.id, reason: 'amount_mismatch' };
     }
-    const updated = moveIntent(store, intent, 'captured', 'capture', nowUtc, 'Captured after confirmed fulfilment', {
+    const updated = moveIntent(store, intent, 'captured', 'capture_confirmed', nowUtc, 'Provider confirmed the capture', {
       capturedMinor: intent.amount.amountMinor,
     });
     return { status: 'captured', intentId: updated.id };
-  } catch {
-    // Outcome unknown. Never assume the capture failed or succeeded; a person checks the provider.
-    const updated = moveIntent(store, intent, 'review_required', 'capture_unknown', nowUtc, 'Capture request had no clear result');
-    return { status: 'review_required', intentId: updated.id, reason: 'capture outcome unknown' };
   }
+  if (truth.state === 'authorised') {
+    const updated = moveIntent(store, intent, 'authorised', 'capture_declined', nowUtc, 'Provider reports the capture was not taken; the hold is still valid');
+    return { status: 'review_required', intentId: updated.id, reason: 'capture declined' };
+  }
+  const updated = moveIntent(store, intent, 'review_required', 'capture_unexpected', nowUtc, `Provider reports ${truth.state} after a capture request`);
+  return { status: 'review_required', intentId: updated.id, reason: `capture returned ${truth.state}` };
 }
 
 // Supplier booking failed after authorisation: release the hold so the customer is not charged.

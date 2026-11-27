@@ -13,6 +13,9 @@ export interface OrderKnobs {
   readonly ticketSeatsCovered?: 'all' | 'first_only';
   readonly priceChangeOnPay?: boolean;
   readonly timeoutOnPayAfterPaying?: boolean; // payment taken, but the reply is lost
+  // Simulates a supplier that asks GO to pay for ticket issuance. GO must refuse (Phase 19.0, D3).
+  // By default the fixture behaves like a partner-funded supplier: the order is funded by the partner.
+  readonly supplierDemandsGoPayment?: boolean;
 }
 
 interface StoredOrder {
@@ -55,7 +58,7 @@ export class FixtureOrderSupplier implements FlightSupplier, FlightOrderOperatio
     const existing = this.results.get(key) as CreateOrderResult | undefined;
     if (existing) return existing; // same key never creates a second order
     const id = `FXORD${String(this.nextId++).padStart(4, '0')}`;
-    this.orders.set(id, { id, passengers, paid: false, cancelled: false, polls: 0 });
+    this.orders.set(id, { id, passengers, paid: !this.knobs.supplierDemandsGoPayment, cancelled: false, polls: 0 });
     const result = { orderId: id, snapshot: this.snapshot(id) };
     this.results.set(key, result);
     if (this.knobs.timeoutOnCreateAfterCreating) {

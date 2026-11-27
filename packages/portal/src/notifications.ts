@@ -2,7 +2,7 @@
 //
 // Rules:
 //   - A message says only what the status says. "Ticket issued" is generated only when the
-//     fulfilment record has supplier documents and the status is ticketed or confirmed.
+//     fulfilment record has supplier documents and GO has verified them (verified or later).
 //   - Email never contains ticket numbers, passenger names or payment details. Customers sign in
 //     to see them. The message is sent to a user ID; the adapter resolves the address on the server.
 //   - No real email provider is included. UnconfiguredEmailAdapter sends nothing and reports
@@ -17,6 +17,7 @@ import { customerStatus } from '../../fulfilment/src/status.ts';
 import type { PaymentStatus } from '../../payments/src/state.ts';
 import type { PortalBooking } from './model.ts';
 import { categoryLabel } from './status-category.ts';
+import { ticketsVisible } from '../../core/src/booking-lifecycle.ts';
 
 export type NotificationKind = 'booking_update' | 'payment_status' | 'ticket_issued' | 'cancellation' | 'operational_problem';
 
@@ -61,7 +62,7 @@ export function bookingUpdateMessage(booking: PortalBooking, nowUtc: string): Ou
 export function ticketIssuedMessage(booking: PortalBooking, nowUtc: string): OutboundMessage | null {
   const r = booking.record;
   if (r.documents.length === 0) return null;
-  if (r.status !== 'ticketed' && r.status !== 'confirmed') return null;
+  if (!ticketsVisible(r.status)) return null;
   const body = [
     `Your airline has issued tickets for your booking.`,
     referenceLine(booking),

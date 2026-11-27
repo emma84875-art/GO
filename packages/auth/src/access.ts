@@ -23,6 +23,7 @@ export const PERMISSIONS = [
   'assignment.manage',
   'audit.read',
   'role.change',
+  'remittance.manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -33,6 +34,9 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = {
   support: ['booking.read.all', 'passenger.read.assigned', 'booking.cancel.staff'],
   // Operations: watches bookings, payments and tickets. Never passenger details, never money actions.
   operations: ['booking.read.all'],
+  // Finance: partner remittances across bookings (create, fail, retry, review). No passenger, ticket or booking-read
+  // permission. Paid, not-required and agreement corrections are administrator actions (core partner-remittance rules).
+  finance: ['remittance.manage'],
   // Administrators: everything support has, plus refunds, assignments, audit and logged role changes.
   admin: [
     'booking.read.all',
@@ -42,10 +46,11 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = {
     'assignment.manage',
     'audit.read',
     'role.change',
+    'remittance.manage',
   ],
 };
 
-const STAFF_ROLES: readonly Role[] = ['support', 'operations', 'admin'];
+const STAFF_ROLES: readonly Role[] = ['support', 'operations', 'finance', 'admin'];
 
 export function isPermission(value: unknown): value is Permission {
   return typeof value === 'string' && (PERMISSIONS as readonly string[]).includes(value);

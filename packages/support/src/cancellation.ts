@@ -28,7 +28,7 @@ export interface CancellationOptions {
 }
 
 // Statuses in which a cancellation request is meaningful (a supplier order exists).
-const CANCELLABLE: readonly FulfilmentStatus[] = ['order_pending', 'ticketing_pending', 'partially_fulfilled', 'ticketed', 'confirmed'];
+const CANCELLABLE: readonly FulfilmentStatus[] = ['partner_ordered', 'ticketing_pending', 'partially_fulfilled', 'tickets_issued', 'verified', 'captured', 'confirmed'];
 
 // Statuses in which a person must check before anything else.
 const CHECK_FIRST: readonly FulfilmentStatus[] = ['order_unknown', 'ticketing_unknown'];

@@ -81,12 +81,13 @@ export class FixturePaymentProvider implements PaymentProvider {
   }
 
   parseWebhook(rawBody: string): ParsedWebhook {
-    const body = JSON.parse(rawBody) as { event?: string; providerRef?: string; amount?: number; currency?: string; state?: string };
-    if (!body.event || !body.providerRef || !Number.isSafeInteger(body.amount) || !body.currency) {
+    const body = JSON.parse(rawBody) as { id?: string; event?: string; providerRef?: string; amount?: number; currency?: string; state?: string };
+    if (!body.id || !body.event || !body.providerRef || !Number.isSafeInteger(body.amount) || !body.currency) {
       throw new PaymentProviderError('invalid_response', 'Fixture webhook is missing fields');
     }
     const reportedState = body.state === 'authorised' || body.state === 'captured' || body.state === 'failed' ? body.state : 'other';
     return {
+      eventId: body.id,
       eventName: body.event,
       providerRef: body.providerRef,
       reportedAmountMinor: body.amount as number,

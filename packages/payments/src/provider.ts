@@ -44,6 +44,7 @@ export interface WebhookVerification {
 }
 
 export interface ParsedWebhook {
+  readonly eventId: string;          // the provider's unique event identifier; the idempotency key
   readonly eventName: string;
   readonly providerRef: string;
   readonly reportedAmountMinor: number;
