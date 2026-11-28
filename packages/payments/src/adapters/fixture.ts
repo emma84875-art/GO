@@ -44,6 +44,12 @@ export class FixturePaymentProvider implements PaymentProvider {
     return { providerRef, redirectUrl: `https://fixture.invalid/pay/${providerRef}` };
   }
 
+  async findByReference(reference: string) {
+    const providerRef = `fx_${reference.replace(/[^a-z0-9]+/gi, '_')}`;
+    const status = this.states.get(providerRef);
+    return status ? { providerRef, status } : null;
+  }
+
   async getStatus(providerRef: string): Promise<ProviderStatus> {
     const status = this.states.get(providerRef);
     if (!status) throw new PaymentProviderError('provider_error', 'Unknown fixture reference');

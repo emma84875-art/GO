@@ -7,7 +7,8 @@
 // no booking in this module reaches 'captured' or 'confirmed' from supplier documents alone.
 //
 // Rules that hold throughout:
-//   - Every supplier write records a 'sent' operation first. A 'sent' operation with no result
+//   - Every supplier write begins an operation in the persistent operation ledger (docs/26) first. The ledger decides
+//     whether the write may be sent, and its result is recorded there. An operation with a lapsed lease and no result
 //     is an unknown outcome. It is never re-sent automatically.
 //   - An unknown outcome locks the booking (order_unknown or ticketing_unknown). A person must
 //     reconcile it with the supplier.
@@ -22,11 +23,16 @@ import type { PaymentStore } from '../../payments/src/store.ts';
 import { captureAfterFulfilment, releaseAfterSupplierFailure, refund } from '../../payments/src/payment-flow.ts';
 import type { FulfilmentRecord, FulfilmentStore } from './store.ts';
 import { authorise, type Actor } from '../../auth/src/actor.ts';
+import { randomUUID } from 'node:crypto';
+import { requestFingerprint, type OperationLedger } from '../../operations/src/ledger.ts';
 
 // Internal steps (release, refund on cancellation, capture) run as the fulfilment service. The
 // caller's own permission is checked once, at the public entry point, with authorise().
 const SERVICE: Actor = Object.freeze({ kind: 'system', service: 'fulfilment' } as const);
 import type { FulfilmentStatus } from './status.ts';
+
+// How long an external call may run before its operation counts as interrupted (docs/26, section 8: a guess).
+const EXTERNAL_LEASE_SECONDS = 300;
 
 export type OrderSupplier = FlightSupplier & Partial<FlightOrderOperations>;
 
@@ -35,7 +41,14 @@ export interface FulfilmentDeps {
   readonly payments: PaymentProvider;
   readonly payStore: PaymentStore;
   readonly store: FulfilmentStore;
+  // The durable operation ledger. Every supplier order, supplier cancel and capture request is begun here first.
+  readonly ledger: OperationLedger;
+  readonly externalLeaseSeconds?: number;
   readonly productionEnabled?: boolean; // owner gate: production ticketing stays off until approved
+}
+
+function leaseSeconds(deps: FulfilmentDeps): number {
+  return deps.externalLeaseSeconds ?? EXTERNAL_LEASE_SECONDS;
 }
 
 // A seat-occupying passenger is any passenger who is not an infant. Infant documents are not
@@ -83,19 +96,36 @@ export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: 
     return deps.store.transition(bookingId, 'expired', 'hold_lapsed_before_order', nowUtc);
   }
 
-  // A prior 'sent' or 'done' order operation means the order must not be created again.
+  // The ledger, not in-memory state, decides whether an order was already requested. A restart cannot forget it.
   const orderKey = `booking:${bookingId}:supplier_order:1`;
-  const prior = deps.store.operation(orderKey);
-  if (prior?.state === 'sent') {
+  const owner = randomUUID();
+  const begun = await deps.ledger.begin({
+    operationType: 'supplier.order',
+    idempotencyKey: orderKey,
+    subjectRef: bookingId,
+    fingerprint: requestFingerprint({ bookingId, intentId: rec.intentId, totalMinor: rec.totalMinor, passengers: rec.passengers.length }),
+    actorLabel: 'backend:fulfilment',
+    correlationId: orderKey,
+    owner,
+    leaseSeconds: leaseSeconds(deps),
+  });
+  if (begun.decision === 'already_succeeded') {
+    return readOrder(deps, deps.store.patch(bookingId, { orderId: begun.resultRef }), nowUtc);
+  }
+  if (begun.decision === 'needs_reconciliation') {
     return deps.store.transition(bookingId, 'order_unknown', 'order_outcome_unknown', nowUtc, {
       lockedReason: 'A previous order request has no recorded result. Reconcile with the supplier before any retry.',
     });
   }
-  if (prior?.state === 'done' && prior.orderId) {
-    return readOrder(deps, deps.store.patch(bookingId, { orderId: prior.orderId }), nowUtc);
+  if (begun.decision === 'in_progress') {
+    return rec; // another process holds the live request. Nothing is sent from here.
+  }
+  if (begun.decision !== 'started') {
+    return deps.store.patch(bookingId, { blockedReason: `Order not sent: the operation ledger reports ${begun.decision}.` });
   }
 
   if (!deps.supplier.createOrder || !deps.supplier.priceOffer) {
+    await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_terminal', failureCode: 'supplier_cannot_order' }, orderKey);
     await release(deps, rec, nowUtc);
     return deps.store.transition(bookingId, 'failed', 'supplier_cannot_order', nowUtc, { blockedReason: 'Supplier does not support orders.' });
   }
@@ -104,26 +134,50 @@ export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: 
   try {
     const fresh = await deps.supplier.priceOffer(rec.offer, nowUtc);
     if (fresh.supplierPrice.amountMinor !== rec.offer.supplierPrice.amountMinor) {
+      await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_retryable', failureCode: 'fare_changed_before_order' }, orderKey);
       await release(deps, rec, nowUtc);
       return deps.store.transition(bookingId, 'failed', 'fare_changed_before_order', nowUtc, { blockedReason: 'The fare changed before the order was made.' });
     }
   } catch (error) {
     if (error instanceof SupplierUnavailableError && error.reason === 'offer_expired') {
+      await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_retryable', failureCode: 'offer_expired' }, orderKey);
       await release(deps, rec, nowUtc);
       return deps.store.transition(bookingId, 'expired', 'fare_expired_before_order', nowUtc);
     }
     if (error instanceof SupplierUnavailableError) {
       // Revalidation failed without an order. Nothing was created, so the authorisation can be released.
+      await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_retryable', failureCode: 'revalidation_failed' }, orderKey);
       await release(deps, rec, nowUtc);
       return deps.store.transition(bookingId, 'failed', 'revalidation_failed', nowUtc, { blockedReason: error.message });
     }
+    await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_retryable', failureCode: 'revalidation_error' }, orderKey);
     throw error;
   }
 
-  deps.store.recordOperation({ key: orderKey, state: 'sent', orderId: null });
+  // The request is recorded as begun in the ledger before the supplier is called. If the process stops here, the lease
+  // lapses and the ledger marks the order unknown. It is never sent again on a guess.
+  let created: Awaited<ReturnType<NonNullable<OrderSupplier['createOrder']>>>;
   try {
-    const created = await deps.supplier.createOrder(rec.offer, rec.passengers, orderKey, nowUtc);
-    deps.store.recordOperation({ key: orderKey, state: 'done', orderId: created.orderId });
+    created = await deps.supplier.createOrder(rec.offer, rec.passengers, orderKey, nowUtc);
+  } catch (error) {
+    if (error instanceof SupplierUnavailableError && (error.reason === 'timeout' || error.reason === 'provider_error')) {
+      // The order may exist. Do not release, do not retry. Lock for reconciliation.
+      await deps.ledger.complete(begun.operationId, owner, { outcome: 'unknown', failureCode: error.reason }, orderKey);
+      return deps.store.transition(bookingId, 'order_unknown', 'order_request_failed_unclear', nowUtc, {
+        lockedReason: 'The order request had no clear answer. The supplier may hold an order. Reconcile before any retry.',
+      });
+    }
+    if (error instanceof SupplierUnavailableError) {
+      // Definitive refusal: no order was created.
+      await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_terminal', failureCode: error.reason }, orderKey);
+      await release(deps, rec, nowUtc);
+      return deps.store.transition(bookingId, 'failed', `order_refused_${error.reason}`, nowUtc, { blockedReason: error.message });
+    }
+    await deps.ledger.complete(begun.operationId, owner, { outcome: 'unknown', failureCode: 'unexpected_error' }, orderKey);
+    throw error;
+  }
+  await deps.ledger.complete(begun.operationId, owner, { outcome: 'succeeded', resultRef: created.orderId }, orderKey);
+  {
     const withOrder = deps.store.patch(bookingId, {
       orderId: created.orderId,
       bookingReference: created.snapshot.bookingReference,
@@ -134,19 +188,6 @@ export async function placeOrder(deps: FulfilmentDeps, actor: Actor, bookingId: 
       bookingReference: withOrder.bookingReference,
     });
     return readOrder(deps, deps.store.get(bookingId) as FulfilmentRecord, nowUtc);
-  } catch (error) {
-    if (error instanceof SupplierUnavailableError && (error.reason === 'timeout' || error.reason === 'provider_error')) {
-      // The order may exist. Do not release, do not retry. Lock for reconciliation.
-      return deps.store.transition(bookingId, 'order_unknown', 'order_request_failed_unclear', nowUtc, {
-        lockedReason: 'The order request had no clear answer. The supplier may hold an order. Reconcile before any retry.',
-      });
-    }
-    if (error instanceof SupplierUnavailableError) {
-      // Definitive refusal: no order was created.
-      await release(deps, rec, nowUtc);
-      return deps.store.transition(bookingId, 'failed', `order_refused_${error.reason}`, nowUtc, { blockedReason: error.message });
-    }
-    throw error;
   }
 }
 
@@ -198,12 +239,43 @@ export async function captureIfVerified(deps: FulfilmentDeps, actor: Actor, book
   authorise(actor, 'payment.capture');
   const rec = requireRecord(deps, bookingId);
   if (rec.status !== 'verified') return rec;
+  const intent = deps.payStore.getIntent(rec.intentId);
+  if (!intent) return deps.store.patch(bookingId, { blockedReason: 'Payment intent not found. Nothing was captured.' });
+
+  // The ledger decides whether the provider may be asked to capture. The key is the intent's capture key, the same one
+  // the provider receives. A retry after a sent request never sends it again.
+  const key = `${intent.reference}:capture:1`;
+  const owner = randomUUID();
+  const begun = await deps.ledger.begin({
+    operationType: 'payment.capture_request',
+    idempotencyKey: key,
+    subjectRef: intent.id,
+    fingerprint: requestFingerprint({ intentId: intent.id, amountMinor: rec.totalMinor, currency: rec.currency }),
+    actorLabel: 'backend:fulfilment',
+    correlationId: key,
+    owner,
+    leaseSeconds: leaseSeconds(deps),
+  });
+  if (begun.decision === 'already_succeeded') {
+    return deps.store.patch(bookingId, { blockedReason: 'A capture was already requested. The provider status must be checked; nothing is sent again.' });
+  }
+  if (begun.decision !== 'started') {
+    return deps.store.patch(bookingId, { blockedReason: `Capture not sent: the operation ledger reports ${begun.decision}. A person checks the provider.` });
+  }
+
   const result = await captureAfterFulfilment(deps.payStore, SERVICE, deps.payments, rec.intentId, 'verified', rec.totalMinor, rec.currency as 'NGN', nowUtc);
   if (result.status === 'captured') {
+    await deps.ledger.complete(begun.operationId, owner, { outcome: 'succeeded', resultRef: intent.providerRef ?? intent.id }, key);
     return deps.store.transition(bookingId, 'captured', 'payment_captured_after_verification', nowUtc);
   }
-  const reason = result.status === 'blocked' ? result.reasons.join(' ') : result.reason;
-  return deps.store.patch(bookingId, { blockedReason: reason });
+  if (result.status === 'blocked') {
+    // Blocked before the provider was called, so nothing was sent and one new attempt is allowed.
+    await deps.ledger.complete(begun.operationId, owner, { outcome: 'failed_retryable', failureCode: 'capture_blocked' }, key);
+    return deps.store.patch(bookingId, { blockedReason: result.reasons.join(' ') });
+  }
+  // The provider was asked and its outcome is not confirmed. It is recorded as unknown and is never sent again automatically.
+  await deps.ledger.complete(begun.operationId, owner, { outcome: 'unknown', failureCode: 'capture_unknown' }, key);
+  return deps.store.patch(bookingId, { blockedReason: result.reason });
 }
 
 // Cancellation: cancel with the supplier, then refund the customer if money was captured,
@@ -223,12 +295,29 @@ export async function cancelBooking(deps: FulfilmentDeps, actor: Actor, bookingI
     return pending; // stays pending: cancellation with the supplier is not supported, so a person must act
   }
   const key = `booking:${bookingId}:supplier_cancel:1`;
-  deps.store.recordOperation({ key, state: 'sent', orderId: rec.orderId });
-  try {
-    await deps.supplier.cancelOrder(rec.orderId, key);
-    deps.store.recordOperation({ key, state: 'done', orderId: rec.orderId });
-  } catch {
-    return pending; // unknown: stay in cancellation_pending. Retry uses the same key.
+  const owner = randomUUID();
+  const begun = await deps.ledger.begin({
+    operationType: 'supplier.cancel',
+    idempotencyKey: key,
+    subjectRef: bookingId,
+    fingerprint: requestFingerprint({ bookingId, orderId: rec.orderId }),
+    actorLabel: 'backend:fulfilment',
+    correlationId: key,
+    owner,
+    leaseSeconds: leaseSeconds(deps),
+  });
+  if (begun.decision === 'started') {
+    try {
+      await deps.supplier.cancelOrder(rec.orderId, key);
+    } catch {
+      // Unknown: the cancel may have been accepted. Stay in cancellation_pending. A retry uses the same key and is refused
+      // by the ledger until the outcome is reconciled.
+      await deps.ledger.complete(begun.operationId, owner, { outcome: 'unknown', failureCode: 'cancel_unknown' }, key);
+      return pending;
+    }
+    await deps.ledger.complete(begun.operationId, owner, { outcome: 'succeeded', resultRef: rec.orderId }, key);
+  } else if (begun.decision !== 'already_succeeded') {
+    return pending; // in_progress, needs_reconciliation or refused: nothing is sent from here
   }
   const cancelled = deps.store.transition(bookingId, 'cancelled', 'supplier_cancelled', nowUtc);
   const intent = deps.payStore.getIntent(rec.intentId);

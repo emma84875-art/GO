@@ -61,6 +61,9 @@ export interface PaymentProvider {
   capture?(providerRef: string, amount: Money, idempotencyKey: string): Promise<ProviderStatus>;
   release?(providerRef: string, idempotencyKey: string): Promise<ProviderStatus>;
   refund?(providerRef: string, amount: Money, idempotencyKey: string): Promise<ProviderStatus>;
+  // Asks the provider whether it holds a payment for one of our references. Used only to reconcile an uncertain start.
+  // An adapter without this method cannot reconcile, so an uncertain start stays unknown until a person decides.
+  findByReference?(reference: string): Promise<{ readonly providerRef: string; readonly status: ProviderStatus } | null>;
   verifyWebhook(rawBody: string, headers: Readonly<Record<string, string | undefined>>): WebhookVerification;
   parseWebhook(rawBody: string): ParsedWebhook;
 }

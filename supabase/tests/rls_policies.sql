@@ -200,7 +200,13 @@ begin
   set local role service_role;
   insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
   values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-initiated', 1500000, 'NGN', 'initiated', 'res-initiated', now() + interval '1 hour');
+  -- Test cleanup only: the row above is removed with triggers off, as the owner. Payments are never deleted in
+  -- production (payments_delete_guard, 20261130000000_payment_guards.sql).
+  reset role;
+  perform set_config('session_replication_role', 'replica', true);
   delete from public.payments where reference = 'res-initiated';
+  perform set_config('session_replication_role', 'origin', true);
+  set local role service_role;
   begin
     insert into public.payments (booking_id, provider, provider_reference, amount_minor, currency, status, reference, expires_at)
     values ('00000000-0000-0000-0000-0000000000a1', 'fixture', 'ref-bad', 1, 'NGN', 'succeeded', 'res-bad', now() + interval '1 hour');

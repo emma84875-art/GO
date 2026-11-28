@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { FixtureOrderSupplier, type OrderKnobs } from '../src/fixture-orders.ts';
 import { FulfilmentStore, type FulfilmentRecord } from '../src/store.ts';
 import { placeOrder, pollTicketing, captureIfVerified, cancelBooking, type FulfilmentDeps } from '../src/orchestrator.ts';
+import { MemoryOperationLedger } from '../../operations/src/ledger.ts';
 import { customerStatus, canMove, move, type FulfilmentStatus } from '../src/status.ts';
 import { customerScreen } from '../src/customer-view.ts';
 import { passengersFor, ticketsFor } from '../src/privacy.ts';
@@ -57,7 +58,7 @@ async function setup(knobs: OrderKnobs = {}, adults = 1, holdExpiresAtUtc = '202
     bookingReference: null, documents: [], lockedReason: null, blockedReason: null,
   });
   store.transition(BOOKING, 'authorised', 'payment_authorised', NOW);
-  const deps: FulfilmentDeps = { supplier, payments, payStore, store };
+  const deps: FulfilmentDeps = { supplier, payments, payStore, store, ledger: new MemoryOperationLedger(() => NOW) };
   return { deps, supplier, payments, payStore, store, intent, offer };
 }
 
